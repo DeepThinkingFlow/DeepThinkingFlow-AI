@@ -1,0 +1,14 @@
+{
+  "model_id": "openai/gpt-oss-20b",
+  "dest": "runtime/transformers/DeepThinkingFlow",
+  "downloaded_files": [
+    "config.json",
+    "generation_config.json",
+    "chat_template.jinja",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json"
+  ],
+  "includes_weights": false,
+  "note": "Transformers requires the official HF root files and sharded weights. The original/original model.safetensors file is informative but is not a complete Transformers model directory by itself."
+}

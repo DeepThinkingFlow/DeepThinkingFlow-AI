@@ -1,0 +1,6 @@
+interface:
+  display_name: "DeepThinkingFlow"
+  short_description: "Reasoning patterns for the local DeepThinkingFlow model"
+  default_prompt: "Use $DeepThinkingFlow to make the local DeepThinkingFlow model answer with clearer reasoning, stronger structure, and example-led analysis."
+policy:
+  allow_implicit_invocation: true

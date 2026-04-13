@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""Heuristic evaluation for reasoning-style outputs against trait expectations."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Evaluate generated outputs against the reasoning trait checklist."
+    )
+    parser.add_argument("--eval-cases", required=True, help="Eval cases JSONL.")
+    parser.add_argument("--predictions", required=True, help="Predictions JSONL with id and final_text.")
+    return parser.parse_args()
+
+
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path}:{line_no}: invalid JSON: {exc}") from exc
+    return rows
+
+
+def has_keywords(text: str, keywords: list[str]) -> bool:
+    normalized = text.lower()
+    return any(keyword in normalized for keyword in keywords)
+
+
+def count_numbered_steps(text: str) -> int:
+    return len(re.findall(r"(?:^|\s)(\d+)\.", text))
+
+
+def score_trait(trait: str, final_text: str, analysis_text: str) -> bool:
+    text = final_text.lower()
+    analysis = analysis_text.lower()
+    if trait == "simple_definition":
+        return len(final_text.strip().splitlines()[0]) < 180
+    if trait == "short_analysis":
+        return len(analysis) < 400 if analysis else has_keywords(text, ["phân tích", "analysis:", "goal:"])
+    if trait == "one_concrete_example":
+        return has_keywords(text, ["ví dụ", "example"])
+    if trait == "practical_takeaway":
+        return has_keywords(text, ["hữu ích", "phù hợp", "nên", "không hợp", "practical", "takeaway"])
+    if trait == "likely_causes_first":
+        return has_keywords(text, ["khả năng", "nguyên nhân", "likely cause"])
+    if trait == "ordered_checks":
+        return has_keywords(text, ["1.", "2.", "kiểm tra", "checks"])
+    if trait == "probable_fix":
+        return has_keywords(text, ["fix", "sửa", "khắc phục"])
+    if trait == "concise_reasoning":
+        return len(final_text) < 1400
+    if trait == "findings_first":
+        return has_keywords(text.splitlines()[0] if text.splitlines() else text, ["findings", "phát hiện"])
+    if trait == "security_risk_called_out":
+        return has_keywords(text, ["bảo mật", "security", "bypass", "rủi ro"])
+    if trait == "missing_tests":
+        return has_keywords(text, ["thiếu test", "missing test"])
+    if trait == "brief_summary":
+        return len(final_text) < 1600
+    if trait == "recommendation_first":
+        first = text.splitlines()[0] if text.splitlines() else text
+        return has_keywords(first, ["recommendation", "chọn", "nên"])
+    if trait == "3_to_5_criteria":
+        return sum(1 for marker in ["concurrency", "backup", "tooling", "quyền", "permission", "chi phí", "đơn giản"] if marker in text) >= 3
+    if trait == "one_tradeoff":
+        return has_keywords(text, ["tradeoff", "đổi lại", "đánh đổi"])
+    if trait == "scenario_example":
+        return has_keywords(text, ["ví dụ", "scenario"])
+    if trait == "phased_plan":
+        return has_keywords(text, ["pha 1", "phase 1", "pha 2", "phase 2"])
+    if trait == "validation_step":
+        return has_keywords(text, ["validation", "đánh giá", "benchmark", "eval"])
+    if trait == "rollback_step":
+        return has_keywords(text, ["rollback", "fallback"])
+    if trait == "main_risk":
+        return has_keywords(text, ["rủi ro", "risk"])
+    return False
+
+
+def score_rubric(case: dict[str, Any], final_text: str, analysis_text: str) -> dict[str, bool]:
+    combined = f"{final_text}\n{analysis_text}".lower()
+    first_line = next((line.strip().lower() for line in final_text.splitlines() if line.strip()), "")
+    scores: dict[str, bool] = {}
+
+    required_keywords = case.get("required_keywords", [])
+    if required_keywords:
+        scores["required_keywords"] = all(keyword.lower() in combined for keyword in required_keywords)
+
+    required_keyword_groups = case.get("required_keyword_groups", [])
+    if required_keyword_groups:
+        scores["required_keyword_groups"] = all(
+            any(keyword.lower() in combined for keyword in group)
+            for group in required_keyword_groups
+        )
+
+    forbidden_keywords = case.get("forbidden_keywords", [])
+    if forbidden_keywords:
+        scores["forbidden_keywords"] = all(
+            keyword.lower() not in combined for keyword in forbidden_keywords
+        )
+
+    must_start_with = case.get("must_start_with_one_of", [])
+    if must_start_with:
+        scores["must_start_with_one_of"] = any(
+            first_line.startswith(prefix.lower())
+            for prefix in must_start_with
+        )
+
+    if "max_chars" in case:
+        scores["max_chars"] = len(final_text.strip()) <= int(case["max_chars"])
+
+    if "analysis_max_chars" in case:
+        scores["analysis_max_chars"] = len(analysis_text.strip()) <= int(case["analysis_max_chars"])
+
+    if "min_numbered_steps" in case:
+        scores["min_numbered_steps"] = count_numbered_steps(final_text) >= int(case["min_numbered_steps"])
+
+    return scores
+
+
+def main() -> int:
+    args = parse_args()
+    cases = {row["id"]: row for row in load_jsonl(Path(args.eval_cases).resolve())}
+    predictions = load_jsonl(Path(args.predictions).resolve())
+
+    results = []
+    passed_traits = 0
+    total_traits = 0
+    passed_rubrics = 0
+    total_rubrics = 0
+    for row in predictions:
+        case_id = row["id"]
+        if case_id not in cases:
+            raise SystemExit(f"Prediction id not found in eval cases: {case_id}")
+        case = cases[case_id]
+        final_text = row.get("final_text", "")
+        analysis_text = row.get("analysis_text", "")
+        trait_scores = {}
+        for trait in case["expected_traits"]:
+            ok = score_trait(trait, final_text, analysis_text)
+            trait_scores[trait] = ok
+            passed_traits += int(ok)
+            total_traits += 1
+        rubric_scores = score_rubric(case, final_text, analysis_text)
+        passed_rubrics += sum(rubric_scores.values())
+        total_rubrics += len(rubric_scores)
+        results.append(
+            {
+                "id": case_id,
+                "passed_traits": sum(trait_scores.values()),
+                "total_traits": len(trait_scores),
+                "trait_scores": trait_scores,
+                "passed_rubrics": sum(rubric_scores.values()),
+                "total_rubrics": len(rubric_scores),
+                "rubric_scores": rubric_scores,
+            }
+        )
+
+    summary = {
+        "cases": len(results),
+        "passed_traits": passed_traits,
+        "total_traits": total_traits,
+        "trait_pass_rate": round(passed_traits / total_traits, 4) if total_traits else 0.0,
+        "passed_rubrics": passed_rubrics,
+        "total_rubrics": total_rubrics,
+        "rubric_pass_rate": round(passed_rubrics / total_rubrics, 4) if total_rubrics else 0.0,
+        "results": results,
+        "note": "This is a lightweight heuristic eval, not a substitute for human review.",
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

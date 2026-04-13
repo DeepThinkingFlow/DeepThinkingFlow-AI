@@ -1,0 +1,9 @@
+# Large local model artifacts
+/original/model.safetensors
+
+# Local runtime weight overlay artifacts
+/runtime/transformers/DeepThinkingFlow/model.safetensors
+/runtime/transformers/DeepThinkingFlow/dtypes.json
+
+# Training outputs and adapter checkpoints
+/out/

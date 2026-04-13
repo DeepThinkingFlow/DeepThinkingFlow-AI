@@ -1,0 +1,44 @@
+{
+  "name": "DeepThinkingFlow",
+  "target_model": "DeepThinkingFlow",
+  "runtime_compatibility": {
+    "upstream_model_id": "openai/gpt-oss-20b",
+    "transformers_model_type": "gpt_oss"
+  },
+  "mode": "runtime-steering-and-sft-seed",
+  "guarantees": {
+    "does_not_modify_weights": true,
+    "does_not_claim_model_retraining": true,
+    "requires_runtime_integration": true
+  },
+  "response_contract": {
+    "supports_languages": ["vi", "en"],
+    "preferred_sections": [
+      "Goal",
+      "Assumptions",
+      "Analysis",
+      "Answer",
+      "Examples",
+      "Checks"
+    ],
+    "review_priority": "findings_first",
+    "comparison_priority": "recommendation_first"
+  },
+  "quality_gates": {
+    "min_sft_examples": 6,
+    "min_harmony_sft_examples": 45,
+    "min_eval_cases": 20,
+    "require_unique_eval_ids": true,
+    "require_unique_harmony_examples": true
+  },
+  "prepared_datasets": {
+    "train_dataset": "training/harmony_sft_vi.train.jsonl",
+    "eval_dataset": "training/harmony_sft_vi.eval.jsonl"
+  },
+  "files": {
+    "system_prompt": "system_prompt.txt",
+    "sft_dataset": "training/sft_reasoning_vi.jsonl",
+    "harmony_sft_dataset": "training/harmony_sft_vi.jsonl",
+    "eval_cases": "evals/reasoning_following.jsonl"
+  }
+}
