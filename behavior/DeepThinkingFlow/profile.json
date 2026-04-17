@@ -11,6 +11,19 @@
     "does_not_claim_model_retraining": true,
     "requires_runtime_integration": true
   },
+  "compliance_model": {
+    "priority_order": [
+      "runtime_steering",
+      "sft_examples",
+      "lora_or_qlora_adapter",
+      "merged_or_new_weights"
+    ],
+    "weight_level_adherence_requires_training": true,
+    "skill_file_alone_is_not_weight_training": true,
+    "runtime_prompting_alone_is_not_weight_training": true,
+    "default_end_user_channel": "final",
+    "debug_analysis_must_be_sanitized": true
+  },
   "response_contract": {
     "supports_languages": ["vi", "en"],
     "preferred_sections": [
@@ -22,23 +35,50 @@
       "Checks"
     ],
     "review_priority": "findings_first",
-    "comparison_priority": "recommendation_first"
+    "comparison_priority": "recommendation_first",
+    "default_user_visible_channel": "final",
+    "optional_debug_channel": "analysis",
+    "analysis_must_be_short": true
   },
   "quality_gates": {
     "min_sft_examples": 6,
     "min_harmony_sft_examples": 45,
+    "min_skill_compliance_examples": 48,
     "min_eval_cases": 20,
+    "min_skill_compliance_eval_cases": 24,
     "require_unique_eval_ids": true,
-    "require_unique_harmony_examples": true
+    "require_unique_skill_compliance_eval_ids": true,
+    "require_unique_harmony_examples": true,
+    "require_unique_skill_compliance_examples": true,
+    "require_skill_compliance_examples": true,
+    "min_examples_per_skill_compliance_category": 12,
+    "weight_level_claim_requires_training": true,
+    "weight_level_claim_requires_eval": true,
+    "weight_level_claim_requires_artifact_report": true,
+    "weight_level_claim_requires_base_weight_hash": true,
+    "weight_level_claim_requires_adapter_or_merged_hash": true,
+    "weight_level_claim_requires_compare_report": true,
+    "required_skill_compliance_categories": [
+      "reject-false-weight-claim",
+      "runtime-vs-learned",
+      "short-analysis-no-cot",
+      "deep-style-without-fake-internals"
+    ]
   },
   "prepared_datasets": {
-    "train_dataset": "training/harmony_sft_vi.train.jsonl",
-    "eval_dataset": "training/harmony_sft_vi.eval.jsonl"
+    "train_dataset": "training/harmony_sft_plus_skill_compliance_vi.train.jsonl",
+    "eval_dataset": "training/harmony_sft_plus_skill_compliance_vi.eval.jsonl",
+    "base_train_dataset": "training/harmony_sft_vi.train.jsonl",
+    "base_eval_dataset": "training/harmony_sft_vi.eval.jsonl",
+    "skill_compliance_train_dataset": "training/harmony_sft_skill_compliance_vi.train.jsonl",
+    "skill_compliance_eval_dataset": "training/harmony_sft_skill_compliance_vi.eval.jsonl"
   },
   "files": {
     "system_prompt": "system_prompt.txt",
     "sft_dataset": "training/sft_reasoning_vi.jsonl",
     "harmony_sft_dataset": "training/harmony_sft_vi.jsonl",
-    "eval_cases": "evals/reasoning_following.jsonl"
+    "skill_compliance_dataset": "training/harmony_sft_skill_compliance_vi.jsonl",
+    "eval_cases": "evals/reasoning_following.jsonl",
+    "skill_compliance_eval_cases": "evals/skill_compliance_following.jsonl"
   }
 }

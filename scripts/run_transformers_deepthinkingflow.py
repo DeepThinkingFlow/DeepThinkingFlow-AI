@@ -91,7 +91,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--include-analysis",
         action="store_true",
-        help="Include extracted analysis text if present. Keep this off for end-user output.",
+        help="Include sanitized extracted analysis text if present. Keep this off for end-user output.",
     )
     parser.add_argument(
         "--reasoning-in-system",

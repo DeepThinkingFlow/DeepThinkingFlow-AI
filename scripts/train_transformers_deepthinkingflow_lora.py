@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from deepthinkingflow_env import detect_dependency_status, inject_local_site_packages
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -37,6 +39,13 @@ def ensure_any_file(path: Path, candidates: list[str], label: str) -> None:
     if not any((path / candidate).is_file() for candidate in candidates):
         formatted = ", ".join(candidates)
         raise ValueError(f"Missing {label} in {path}. Expected one of: {formatted}")
+
+
+def resolve_model_reference(model_name_or_path: str) -> str:
+    path = Path(model_name_or_path)
+    if path.exists():
+        return str(path.resolve())
+    return model_name_or_path
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -78,9 +87,15 @@ def validate_messages(rows: list[dict[str, Any]], label: str) -> None:
 
 def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     cfg = dict(config)
+    cfg.setdefault("behavior_bundle_dir", "")
     cfg.setdefault("eval_dataset_path", "")
+    cfg.setdefault("base_eval_cases_path", "")
+    cfg.setdefault("skill_eval_cases_path", "")
+    cfg.setdefault("expected_train_dataset_path", "")
+    cfg.setdefault("expected_eval_dataset_path", "")
     cfg.setdefault("val_split_ratio", 0.1)
     cfg.setdefault("seed", 42)
+    cfg.setdefault("fp16", False)
     cfg.setdefault("weight_decay", 0.01)
     cfg.setdefault("warmup_ratio", 0.03)
     cfg.setdefault("logging_steps", 10)
@@ -104,6 +119,9 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     cfg.setdefault("max_train_samples", 0)
     cfg.setdefault("max_eval_samples", 0)
     cfg.setdefault("ddp_find_unused_parameters", False)
+    cfg.setdefault("require_all_target_modules_hit", True)
+    cfg.setdefault("min_target_module_matches", len(cfg.get("target_modules", [])))
+    cfg.setdefault("min_trainable_params", 1)
     return cfg
 
 
@@ -141,6 +159,10 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("Choose bf16 or fp16, not both.")
     if config["early_stopping_patience"] < 1:
         raise ValueError("early_stopping_patience must be >= 1.")
+    if int(config["min_target_module_matches"]) < 1:
+        raise ValueError("min_target_module_matches must be >= 1.")
+    if int(config["min_trainable_params"]) < 1:
+        raise ValueError("min_trainable_params must be >= 1.")
 
     model_path = Path(config["model_name_or_path"]).resolve()
     if model_path.exists():
@@ -157,6 +179,23 @@ def validate_config(config: dict[str, Any]) -> None:
     ensure_file(dataset_path, "training dataset")
     if config["eval_dataset_path"]:
         ensure_file(Path(config["eval_dataset_path"]).resolve(), "eval dataset")
+    if config["behavior_bundle_dir"]:
+        bundle_dir = Path(config["behavior_bundle_dir"]).resolve()
+        ensure_file(bundle_dir / "profile.json", "behavior bundle profile")
+        ensure_file(bundle_dir / "system_prompt.txt", "behavior bundle system prompt")
+    if config["base_eval_cases_path"]:
+        ensure_file(Path(config["base_eval_cases_path"]).resolve(), "base eval cases")
+    if config["skill_eval_cases_path"]:
+        ensure_file(Path(config["skill_eval_cases_path"]).resolve(), "skill eval cases")
+    if config["expected_train_dataset_path"]:
+        expected_train_dataset_path = str(Path(config["expected_train_dataset_path"]).resolve())
+        if expected_train_dataset_path != str(dataset_path):
+            raise ValueError("dataset_path does not match expected_train_dataset_path")
+    if config["expected_eval_dataset_path"] and config["eval_dataset_path"]:
+        expected_eval_dataset_path = str(Path(config["expected_eval_dataset_path"]).resolve())
+        actual_eval_dataset_path = str(Path(config["eval_dataset_path"]).resolve())
+        if expected_eval_dataset_path != actual_eval_dataset_path:
+            raise ValueError("eval_dataset_path does not match expected_eval_dataset_path")
 
 
 def split_rows(rows: list[dict[str, Any]], val_ratio: float, seed: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -290,12 +329,52 @@ def write_run_manifest(output_dir: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def _module_matches_target(module_name: str, target: str) -> bool:
+    if module_name == target:
+        return True
+    return module_name.endswith(f".{target}")
+
+
+def inspect_target_module_coverage(model, target_modules: list[str]) -> dict[str, Any]:
+    named_modules = [name for name, _ in model.named_modules()]
+    per_target: dict[str, list[str]] = {}
+    for target in target_modules:
+        matches = [name for name in named_modules if _module_matches_target(name, target)]
+        per_target[target] = matches
+    total_matches = sum(len(matches) for matches in per_target.values())
+    missing_targets = [target for target, matches in per_target.items() if not matches]
+    return {
+        "per_target_match_count": {target: len(matches) for target, matches in per_target.items()},
+        "matched_module_examples": {target: matches[:8] for target, matches in per_target.items()},
+        "total_matches": total_matches,
+        "missing_targets": missing_targets,
+    }
+
+
+def count_trainable_parameters(model) -> dict[str, Any]:
+    trainable = 0
+    total = 0
+    for param in model.parameters():
+        count = int(param.numel())
+        total += count
+        if getattr(param, "requires_grad", False):
+            trainable += count
+    ratio = (trainable / total) if total else 0.0
+    return {
+        "trainable_params": trainable,
+        "total_params": total,
+        "trainable_ratio": round(ratio, 8),
+    }
+
+
 def main() -> int:
+    injected_site_packages = inject_local_site_packages()
     args = parse_args()
     config_path = Path(args.config).resolve()
     ensure_file(config_path, "training config")
     config = normalize_config(load_config(config_path))
     validate_config(config)
+    resolved_model_ref = resolve_model_reference(config["model_name_or_path"])
 
     train_rows = load_jsonl(Path(config["dataset_path"]).resolve())
     validate_messages(train_rows, "train")
@@ -312,14 +391,52 @@ def main() -> int:
     train_rows = take_limit(train_rows, int(config["max_train_samples"]))
     eval_rows = take_limit(eval_rows, int(config["max_eval_samples"]))
 
+    summary = {
+        "config": str(config_path),
+        "model_name_or_path": config["model_name_or_path"],
+        "resolved_model_name_or_path": resolved_model_ref,
+        "behavior_bundle_dir": config["behavior_bundle_dir"],
+        "train_examples_raw": len(train_rows),
+        "eval_examples_raw": len(eval_rows),
+        "train_examples_after_preprocess": None,
+        "eval_examples_after_preprocess": None,
+        "dropped_train_examples": None,
+        "dropped_eval_examples": None,
+        "output_dir": config["output_dir"],
+        "use_qlora": bool(config["use_qlora"]),
+        "load_in_4bit": bool(config["load_in_4bit"]),
+        "bf16": bool(config["bf16"]),
+        "fp16": bool(config.get("fp16", False)),
+        "target_modules": config["target_modules"],
+        "target_parameters": config.get("target_parameters", []),
+        "require_all_target_modules_hit": bool(config["require_all_target_modules_hit"]),
+        "min_target_module_matches": int(config["min_target_module_matches"]),
+        "min_trainable_params": int(config["min_trainable_params"]),
+        "base_eval_cases_path": config["base_eval_cases_path"],
+        "skill_eval_cases_path": config["skill_eval_cases_path"],
+        "tokenizer_precheck": "pending",
+        "dependency_status": detect_dependency_status(),
+        "injected_site_packages": injected_site_packages,
+        "first_train_render_preview": "",
+        "lora_target_coverage": None,
+        "trainable_parameter_report": None,
+    }
+
+    tokenizer = None
     try:
         from transformers import AutoTokenizer
-    except Exception as exc:
+    except Exception:
+        if args.dry_run:
+            summary["tokenizer_precheck"] = "unavailable"
+            output_dir = Path(config["output_dir"]).resolve()
+            write_run_manifest(output_dir, summary)
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+            return 0
         raise SystemExit(
-            "transformers is required even for dry-run validation. Install requirements from requirements-train-gpt-oss.txt."
-        ) from exc
+            "Full training dependencies are missing. Install requirements from requirements-train-dtf.txt."
+        )
 
-    tokenizer = AutoTokenizer.from_pretrained(config["model_name_or_path"])
+    tokenizer = AutoTokenizer.from_pretrained(resolved_model_ref)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
@@ -339,28 +456,24 @@ def main() -> int:
         train_on_full_text=bool(config["train_on_full_text"]),
     ) if eval_rows else ([], 0)
 
-    summary = {
-        "config": str(config_path),
-        "model_name_or_path": config["model_name_or_path"],
-        "train_examples_raw": len(train_rows),
-        "eval_examples_raw": len(eval_rows),
-        "train_examples_after_preprocess": len(processed_train),
-        "eval_examples_after_preprocess": len(processed_eval),
-        "dropped_train_examples": dropped_train,
-        "dropped_eval_examples": dropped_eval,
-        "output_dir": config["output_dir"],
-        "use_qlora": bool(config["use_qlora"]),
-        "load_in_4bit": bool(config["load_in_4bit"]),
-        "target_modules": config["target_modules"],
-        "target_parameters": config.get("target_parameters", []),
-        "first_train_render_preview": processed_train[0]["text"][:1400],
-    }
+    summary["train_examples_after_preprocess"] = len(processed_train)
+    summary["eval_examples_after_preprocess"] = len(processed_eval)
+    summary["dropped_train_examples"] = dropped_train
+    summary["dropped_eval_examples"] = dropped_eval
+    summary["tokenizer_precheck"] = "ok"
+    summary["first_train_render_preview"] = processed_train[0]["text"][:1400]
 
     output_dir = Path(config["output_dir"]).resolve()
     write_run_manifest(output_dir, summary)
     if args.dry_run:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
+
+    if not all(summary["dependency_status"].get(name, False) for name in ("torch", "datasets", "peft", "accelerate")):
+        raise SystemExit(
+            "Training dependencies are incomplete. Install requirements from requirements-train-dtf.txt "
+            "into .venv-tools or your active environment."
+        )
 
     try:
         import torch
@@ -380,34 +493,57 @@ def main() -> int:
         )
     except Exception as exc:
         raise SystemExit(
-            "Full training dependencies are missing. Install requirements from requirements-train-gpt-oss.txt."
+            "Full training dependencies are missing. Install requirements from requirements-train-dtf.txt."
         ) from exc
 
     train_dataset = Dataset.from_list(processed_train)
     eval_dataset = Dataset.from_list(processed_eval) if processed_eval else None
+    has_cuda = torch.cuda.is_available()
+    summary["execution_device"] = "cuda" if has_cuda else "cpu"
 
     quantization_config = None
+    training_dtype = None
+    if config["bf16"]:
+        training_dtype = torch.bfloat16
+    elif config.get("fp16", False):
+        training_dtype = torch.float16
+    else:
+        training_dtype = torch.float32
+
     if config["use_qlora"] or config["load_in_4bit"]:
         quantization_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16 if config["bf16"] else torch.float16,
+            bnb_4bit_compute_dtype=training_dtype,
         )
 
     model_kwargs = {
-        "torch_dtype": torch.bfloat16 if config["bf16"] else torch.float16,
-        "device_map": "auto",
+        "torch_dtype": training_dtype,
         "use_cache": False,
         "attn_implementation": config["attn_implementation"],
     }
+    if has_cuda or quantization_config is not None:
+        model_kwargs["device_map"] = "auto"
     if quantization_config is not None:
         model_kwargs["quantization_config"] = quantization_config
 
     model = AutoModelForCausalLM.from_pretrained(
-        config["model_name_or_path"],
+        resolved_model_ref,
         **model_kwargs,
     )
+    coverage = inspect_target_module_coverage(model, list(config["target_modules"]))
+    summary["lora_target_coverage"] = coverage
+    if bool(config["require_all_target_modules_hit"]) and coverage["missing_targets"]:
+        raise ValueError(
+            "LoRA target_modules missing on loaded model: "
+            + ", ".join(coverage["missing_targets"])
+        )
+    if int(coverage["total_matches"]) < int(config["min_target_module_matches"]):
+        raise ValueError(
+            "LoRA target_modules attached to too few modules: "
+            f"{coverage['total_matches']} < {int(config['min_target_module_matches'])}"
+        )
     model.config.use_cache = False
     if quantization_config is not None:
         model = prepare_model_for_kbit_training(
@@ -427,6 +563,13 @@ def main() -> int:
         bias="none",
     )
     model = get_peft_model(model, lora_cfg)
+    trainable_report = count_trainable_parameters(model)
+    summary["trainable_parameter_report"] = trainable_report
+    if int(trainable_report["trainable_params"]) < int(config["min_trainable_params"]):
+        raise ValueError(
+            "LoRA trainable parameter count is below minimum gate: "
+            f"{trainable_report['trainable_params']} < {int(config['min_trainable_params'])}"
+        )
 
     train_args = TrainingArguments(
         output_dir=str(output_dir),
@@ -449,10 +592,11 @@ def main() -> int:
         max_grad_norm=float(config["max_grad_norm"]),
         lr_scheduler_type=config["lr_scheduler_type"],
         bf16=bool(config["bf16"]),
-        fp16=not bool(config["bf16"]),
+        fp16=bool(config.get("fp16", False)),
         seed=int(config["seed"]),
         gradient_checkpointing=bool(config["gradient_checkpointing"]),
         dataloader_num_workers=int(config["dataloader_num_workers"]),
+        dataloader_pin_memory=has_cuda,
         report_to=config["report_to"],
         optim=config["optim"],
         remove_unused_columns=False,
@@ -477,6 +621,9 @@ def main() -> int:
     trainer.save_model(str(output_dir))
     tokenizer.save_pretrained(str(output_dir))
     metrics = dict(train_result.metrics)
+    metrics.update(trainable_report)
+    metrics["lora_target_total_matches"] = coverage["total_matches"]
+    metrics["lora_missing_targets"] = coverage["missing_targets"]
     if eval_dataset is not None:
         metrics.update(trainer.evaluate())
     write_run_manifest(

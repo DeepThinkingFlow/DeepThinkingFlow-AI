@@ -4,6 +4,11 @@
 # Local runtime weight overlay artifacts
 /runtime/transformers/DeepThinkingFlow/model.safetensors
 /runtime/transformers/DeepThinkingFlow/dtypes.json
+/runtime/transformers/DeepThinkingFlow-tiny-smoke/model.safetensors
 
 # Training outputs and adapter checkpoints
 /out/
+
+# Cache directories and tags
+.cache/
+CACHEDIR.TAG

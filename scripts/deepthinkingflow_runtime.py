@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 DEFAULT_MODEL_DIR = "runtime/transformers/DeepThinkingFlow"
 DEFAULT_BUNDLE_DIR = "behavior/DeepThinkingFlow"
+VISIBLE_ANALYSIS_MAX_CHARS = 700
 
 
 def ensure_file(path: Path, label: str) -> None:
@@ -37,7 +39,16 @@ def resolve_bundle_dir(bundle: str) -> Path:
 
 
 def load_system_prompt(bundle_dir: Path, reasoning_effort: str, reasoning_in_system: bool) -> str:
-    system_prompt = (bundle_dir / "system_prompt.txt").read_text(encoding="utf-8").strip()
+    compiled_runtime_pack_path = bundle_dir / "compiled" / "runtime_pack.compact.txt"
+    compiled_prompt_path = bundle_dir / "compiled" / "system_prompt.compact.txt"
+    prompt_path = (
+        compiled_runtime_pack_path
+        if compiled_runtime_pack_path.is_file()
+        else compiled_prompt_path
+        if compiled_prompt_path.is_file()
+        else (bundle_dir / "system_prompt.txt")
+    )
+    system_prompt = prompt_path.read_text(encoding="utf-8").strip()
     if reasoning_in_system:
         system_prompt = f"{system_prompt}\n\nReasoning: {reasoning_effort}"
     return system_prompt
@@ -76,6 +87,40 @@ def build_low_memory_warning_payload(model_path: Path) -> dict[str, Any] | None:
     }
 
 
+def normalize_visible_text(
+    text: str,
+    *,
+    max_chars: int | None = None,
+    drop_channel_lines: bool = False,
+) -> str:
+    text = text.replace("<|start|>assistant", "")
+    text = text.replace("<|message|>", "")
+    text = re.sub(r"<\|[^>]+\|>", " ", text)
+
+    cleaned_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if cleaned_lines and cleaned_lines[-1] != "":
+                cleaned_lines.append("")
+            continue
+        normalized = re.sub(r"[^a-z]+", "", line.lower())
+        if drop_channel_lines and normalized in {"analysis", "commentary", "final", "call", "return", "end"}:
+            continue
+        cleaned_lines.append(line)
+
+    while cleaned_lines and cleaned_lines[-1] == "":
+        cleaned_lines.pop()
+
+    text = "\n".join(cleaned_lines)
+    text = re.sub(r"[ \t]{2,}", " ", text).strip()
+    if max_chars is not None and len(text) > max_chars:
+        clipped = text[:max_chars].rstrip()
+        clipped = clipped.rsplit("\n", 1)[0].rstrip() or clipped
+        text = clipped.rstrip(" .,;:") + "..."
+    return text.strip()
+
+
 def extract_final_text(decoded_completion: str) -> str:
     marker = "<|channel|>final<|message|>"
     text = decoded_completion.split(marker, 1)[-1] if marker in decoded_completion else decoded_completion
@@ -83,7 +128,7 @@ def extract_final_text(decoded_completion: str) -> str:
     for stop in ("<|return|>", "<|call|>", "<|end|>", "<|channel|>analysis", "<|channel|>commentary"):
         if stop in text:
             text = text.split(stop, 1)[0]
-    return text.strip()
+    return normalize_visible_text(text)
 
 
 def extract_analysis_text(decoded_completion: str) -> str:
@@ -94,7 +139,11 @@ def extract_analysis_text(decoded_completion: str) -> str:
     for stop in ("<|end|>", "<|call|>", "<|return|>", "<|channel|>final<|message|>"):
         if stop in text:
             text = text.split(stop, 1)[0]
-    return text.strip()
+    return normalize_visible_text(
+        text,
+        max_chars=VISIBLE_ANALYSIS_MAX_CHARS,
+        drop_channel_lines=True,
+    )
 
 
 def import_transformers_runtime() -> tuple[Any, Any]:

@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = Path(__file__).resolve().parent
+VENV_TOOLS_PYTHON = ROOT_DIR / ".venv-tools" / "bin" / "python"
 
 COMMANDS = {
     "chat": {
@@ -18,6 +19,10 @@ COMMANDS = {
     "run": {
         "script": "run_transformers_deepthinkingflow.py",
         "description": "One-shot generation with JSON output.",
+    },
+    "inspect-weights": {
+        "script": "inspect_safetensors_model.py",
+        "description": "Audit a local safetensors weight file without loading tensors into RAM.",
     },
     "render-prompt": {
         "script": "render_transformers_deepthinkingflow_prompt.py",
@@ -43,6 +48,26 @@ COMMANDS = {
         "script": "prepare_harmony_sft_dataset.py",
         "description": "Split and prepare the harmony SFT dataset.",
     },
+    "prepare-training-assets": {
+        "script": "prepare_deepthinkingflow_training_assets.py",
+        "description": "Build deterministic base, skill-compliance, and combined train/eval assets.",
+    },
+    "compile-bundle": {
+        "script": "compile_behavior_bundle.py",
+        "description": "Compile the behavior bundle into a compact runtime prompt pack.",
+    },
+    "bootstrap-training-env": {
+        "script": "bootstrap_training_env.py",
+        "description": "Install DeepThinkingFlow training dependencies into .venv-tools.",
+    },
+    "preflight-train": {
+        "script": "preflight_deepthinkingflow_training.py",
+        "description": "Estimate whether a training config is feasible on the current machine.",
+    },
+    "generate-skill-compliance": {
+        "script": "generate_skill_compliance_corpus.py",
+        "description": "Regenerate the expanded skill-compliance dataset and eval corpus.",
+    },
     "train-lora": {
         "script": "train_transformers_deepthinkingflow_lora.py",
         "description": "Launch or dry-run the LoRA/QLoRA training pipeline.",
@@ -51,7 +76,13 @@ COMMANDS = {
         "script": "evaluate_reasoning_outputs.py",
         "description": "Score outputs against the reasoning eval rubric.",
     },
+    "report-artifacts": {
+        "script": "report_deepthinkingflow_artifacts.py",
+        "description": "Hash base weights, adapter outputs, eval files, and classify claim level.",
+    },
 }
+
+VENV_PREFERRED_COMMANDS = {"bootstrap-training-env", "train-lora", "eval", "preflight-train"}
 
 
 def print_help() -> None:
@@ -68,13 +99,19 @@ def print_help() -> None:
     print("Examples:")
     print("  python scripts/deepthinkingflow_cli.py chat")
     print('  python scripts/deepthinkingflow_cli.py run --user "Phan tich prompt nay"')
+    print("  python scripts/deepthinkingflow_cli.py inspect-weights --path original/model.safetensors")
+    print("  python scripts/deepthinkingflow_cli.py prepare-training-assets")
+    print("  python scripts/deepthinkingflow_cli.py generate-skill-compliance")
+    print("  python scripts/deepthinkingflow_cli.py compile-bundle")
+    print("  python scripts/deepthinkingflow_cli.py preflight-train --config training/DeepThinkingFlow-lora/config.example.json")
     print("  python scripts/deepthinkingflow_cli.py help train-lora")
 
 
 def dispatch(command: str, forwarded_args: list[str]) -> int:
     script_path = SCRIPTS_DIR / COMMANDS[command]["script"]
+    python_executable = str(VENV_TOOLS_PYTHON) if command in VENV_PREFERRED_COMMANDS and VENV_TOOLS_PYTHON.is_file() else sys.executable
     completed = subprocess.run(
-        [sys.executable, str(script_path), *forwarded_args],
+        [python_executable, str(script_path), *forwarded_args],
         cwd=str(ROOT_DIR),
         check=False,
     )

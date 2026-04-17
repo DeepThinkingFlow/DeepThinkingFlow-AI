@@ -22,7 +22,7 @@ CHAT_HELP = """Commands:
   /status              Show current runtime settings.
   /clear               Clear chat history and keep only the system prompt.
   /history             Print the current retained conversation.
-  /analysis on|off     Toggle visible analysis output.
+  /analysis on|off     Toggle sanitized visible analysis output.
   /reasoning <level>   Switch reasoning effort: low, medium, or high.
   /quit                Exit the chat session.
 """
@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--show-analysis",
         action="store_true",
-        help="Show extracted analysis text for debugging.",
+        help="Show sanitized extracted analysis text for debugging.",
     )
     parser.add_argument(
         "--reasoning-in-system",
