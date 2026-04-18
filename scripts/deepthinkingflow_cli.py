@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from deepthinkingflow_exit_codes import OK, USAGE_ERROR
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = Path(__file__).resolve().parent
 VENV_TOOLS_PYTHON = ROOT_DIR / ".venv-tools" / "bin" / "python"
@@ -32,6 +34,10 @@ COMMANDS = {
         "script": "compose_behavior_request.py",
         "description": "Compose system/user messages from the behavior bundle.",
     },
+    "export-runtime": {
+        "script": "export_external_runtime_assets.py",
+        "description": "Export runtime-only assets for external hosts such as Ollama and Claude Code.",
+    },
     "validate-bundle": {
         "script": "validate_behavior_bundle.py",
         "description": "Validate profile, datasets, and eval bundle health.",
@@ -47,6 +53,18 @@ COMMANDS = {
     "prepare-sft": {
         "script": "prepare_harmony_sft_dataset.py",
         "description": "Split and prepare the harmony SFT dataset.",
+    },
+    "prepare-datasets": {
+        "script": "prepare_external_datasets.py",
+        "description": "Prepare external reasoning/coding datasets into chat-templated HF datasets.",
+    },
+    "export-chat-jsonl": {
+        "script": "export_prepared_chat_jsonl.py",
+        "description": "Export a prepared HF chat dataset directory into JSONL rows with messages.",
+    },
+    "build-external-train-bundle": {
+        "script": "build_external_training_bundle.py",
+        "description": "Build train/eval JSONL assets from prepared external chat datasets.",
     },
     "prepare-training-assets": {
         "script": "prepare_deepthinkingflow_training_assets.py",
@@ -64,6 +82,26 @@ COMMANDS = {
         "script": "preflight_deepthinkingflow_training.py",
         "description": "Estimate whether a training config is feasible on the current machine.",
     },
+    "preflight-all": {
+        "script": "preflight_deepthinkingflow_project.py",
+        "description": "Run a consolidated project preflight across bundle, runtime, training, and external hosts.",
+    },
+    "doctor": {
+        "script": "doctor_deepthinkingflow.py",
+        "description": "Run a release-style health report across verify, claim gates, host readiness, and artifacts.",
+    },
+    "verify": {
+        "script": "verify_deepthinkingflow_project.py",
+        "description": "Run a consolidated verification suite across bundle validation, preflight, and smoke tests.",
+    },
+    "tiny-smoke-release": {
+        "script": "run_tiny_smoke_release_lane.py",
+        "description": "Run a real tiny-model smoke training lane and emit artifact, verify, and release reports.",
+    },
+    "system-check": {
+        "script": "deepthinkingflow_system_check.py",
+        "description": "Check minimum RAM, CPU, GPU, and VRAM guidance without blocking startup.",
+    },
     "generate-skill-compliance": {
         "script": "generate_skill_compliance_corpus.py",
         "description": "Regenerate the expanded skill-compliance dataset and eval corpus.",
@@ -71,6 +109,10 @@ COMMANDS = {
     "train-lora": {
         "script": "train_transformers_deepthinkingflow_lora.py",
         "description": "Launch or dry-run the LoRA/QLoRA training pipeline.",
+    },
+    "train-lora-staged": {
+        "script": "train_deepthinkingflow_staged.py",
+        "description": "Run staged LoRA training with progressive sample growth and checkpoint resume.",
     },
     "eval": {
         "script": "evaluate_reasoning_outputs.py",
@@ -80,9 +122,13 @@ COMMANDS = {
         "script": "report_deepthinkingflow_artifacts.py",
         "description": "Hash base weights, adapter outputs, eval files, and classify claim level.",
     },
+    "release-manifest": {
+        "script": "build_release_manifest.py",
+        "description": "Build a release-oriented manifest from verify and artifact reports.",
+    },
 }
 
-VENV_PREFERRED_COMMANDS = {"bootstrap-training-env", "train-lora", "eval", "preflight-train"}
+VENV_PREFERRED_COMMANDS = {"bootstrap-training-env", "train-lora", "train-lora-staged", "eval", "preflight-train"}
 
 
 def print_help() -> None:
@@ -100,10 +146,19 @@ def print_help() -> None:
     print("  python scripts/deepthinkingflow_cli.py chat")
     print('  python scripts/deepthinkingflow_cli.py run --user "Phan tich prompt nay"')
     print("  python scripts/deepthinkingflow_cli.py inspect-weights --path original/model.safetensors")
+    print("  python scripts/deepthinkingflow_cli.py export-runtime --target ollama --ollama-model llama3.1:8b")
+    print("  python scripts/deepthinkingflow_cli.py prepare-datasets --num_proc 1 --ot3_limit 100 --oci_limit 100")
+    print("  python scripts/deepthinkingflow_cli.py export-chat-jsonl --input-dir data/openthoughts3_processed --output-jsonl data/openthoughts3_processed.jsonl")
+    print("  python scripts/deepthinkingflow_cli.py build-external-train-bundle --input-jsonl data/openthoughts3_processed.jsonl --input-jsonl data/opencodeinstruct_processed.jsonl --train-output data/external-train.jsonl --eval-output data/external-eval.jsonl")
     print("  python scripts/deepthinkingflow_cli.py prepare-training-assets")
     print("  python scripts/deepthinkingflow_cli.py generate-skill-compliance")
     print("  python scripts/deepthinkingflow_cli.py compile-bundle")
     print("  python scripts/deepthinkingflow_cli.py preflight-train --config training/DeepThinkingFlow-lora/config.example.json")
+    print("  python scripts/deepthinkingflow_cli.py preflight-all")
+    print("  python scripts/deepthinkingflow_cli.py doctor")
+    print("  python scripts/deepthinkingflow_cli.py verify")
+    print("  python scripts/deepthinkingflow_cli.py tiny-smoke-release")
+    print("  python scripts/deepthinkingflow_cli.py release-manifest --output out/release-manifest.json")
     print("  python scripts/deepthinkingflow_cli.py help train-lora")
 
 
@@ -132,14 +187,14 @@ def main() -> int:
         if command not in COMMANDS:
             print(f"Unknown command: {command}", file=sys.stderr)
             print_help()
-            return 2
+            return USAGE_ERROR
         return dispatch(command, ["--help"])
 
     command = args[0]
     if command not in COMMANDS:
         print(f"Unknown command: {command}", file=sys.stderr)
         print_help()
-        return 2
+        return USAGE_ERROR
     return dispatch(command, args[1:])
 
 

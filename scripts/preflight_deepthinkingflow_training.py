@@ -9,6 +9,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from deepthinkingflow_exit_codes import OK, PRECONDITION_FAILED
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -113,7 +115,9 @@ def main() -> int:
         "feasibility": feasibility,
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
+    if not feasibility["can_attempt_local_training"]:
+        return PRECONDITION_FAILED
+    return OK
 
 
 if __name__ == "__main__":

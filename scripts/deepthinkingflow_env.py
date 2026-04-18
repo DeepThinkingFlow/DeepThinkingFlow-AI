@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import sys
 from pathlib import Path
 
@@ -36,3 +37,22 @@ def detect_dependency_status() -> dict[str, bool]:
     inject_local_site_packages()
     modules = ["transformers", "datasets", "peft", "torch", "accelerate", "safetensors"]
     return {name: module_available(name) for name in modules}
+
+
+def command_available(command_name: str) -> bool:
+    return shutil.which(command_name) is not None
+
+
+def detect_external_runtime_status() -> dict[str, bool]:
+    return {
+        "ollama": command_available("ollama"),
+        "claude": command_available("claude"),
+        "claude_code": command_available("claude-code"),
+    }
+
+
+def external_runtime_guidance() -> dict[str, str]:
+    return {
+        "ollama": "Use `python scripts/deepthinkingflow_cli.py export-runtime --target ollama --ollama-model <tag>` to export a runtime-only bridge.",
+        "claude": "Use the repo Python CLI directly, or export runtime assets with `python scripts/deepthinkingflow_cli.py export-runtime --target claude-code`.",
+    }

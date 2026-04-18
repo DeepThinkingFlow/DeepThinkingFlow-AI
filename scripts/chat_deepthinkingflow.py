@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from deepthinkingflow_system_check import build_report as build_system_report
+from deepthinkingflow_system_check import format_warning_lines as format_system_warning_lines
 from deepthinkingflow_runtime import (
     DEFAULT_BUNDLE_DIR,
     DEFAULT_MODEL_DIR,
@@ -74,7 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--torch-dtype",
         default="auto",
-        help="Transformers torch_dtype argument.",
+        help="Transformers dtype argument.",
     )
     parser.add_argument(
         "--attn-implementation",
@@ -167,6 +169,9 @@ def main() -> int:
 
     bundle_dir = resolve_bundle_dir(args.bundle)
     model_ref, model_path = resolve_model_ref(args.model_dir)
+    system_report = build_system_report("inference", model_path)
+    for line in format_system_warning_lines(system_report):
+        print(line, file=sys.stderr)
     warning = build_low_memory_warning_payload(model_path)
     if warning:
         print(
@@ -180,7 +185,7 @@ def main() -> int:
     tokenizer, model = load_model_and_tokenizer(
         model_ref,
         device_map=args.device_map,
-        torch_dtype=args.torch_dtype,
+        dtype=args.torch_dtype,
         attn_implementation=args.attn_implementation,
     )
 

@@ -12,3 +12,23 @@
 # Cache directories and tags
 .cache/
 CACHEDIR.TAG
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local virtual environments
+.venv-tools/
+.venv/
+venv/
+
+# Local Node install artifacts
+node_modules/
+npm-debug.log*
+
+# Local exports and reports
+/tmp/
+*.log

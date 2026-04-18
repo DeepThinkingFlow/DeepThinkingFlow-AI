@@ -1,9 +1,9 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white" />
   <img src="https://img.shields.io/badge/License-GPLv3-green?style=for-the-badge&logo=gnu&logoColor=white" />
-  <img src="https://img.shields.io/badge/Transformers-4.57%2B-orange?style=for-the-badge&logo=huggingface&logoColor=white" />
-  <img src="https://img.shields.io/badge/PyTorch-2.7%2B-red?style=for-the-badge&logo=pytorch&logoColor=white" />
-  <img src="https://img.shields.io/badge/PEFT-0.17%2B-purple?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Transformers-5.5%2B-orange?style=for-the-badge&logo=huggingface&logoColor=white" />
+  <img src="https://img.shields.io/badge/PyTorch-2.11%2B-red?style=for-the-badge&logo=pytorch&logoColor=white" />
+  <img src="https://img.shields.io/badge/PEFT-0.19%2B-purple?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Tests-27%2F27%20Passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" />
 </p>
 
@@ -30,6 +30,7 @@
 - [Safetensors Tensor Map](#safetensors-tensor-map)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [External Hosts](#external-hosts)
 - [CLI Reference](#cli-reference)
 - [Workflows](#workflows)
   - [Inference Workflow](#1-inference-workflow)
@@ -50,7 +51,9 @@
 
 ## Overview
 
-DeepThinkingFlow is a comprehensive local AI system consisting of:
+DeepThinkingFlow is a separately built local AI project focused on structured reasoning, behavior steering, and adapter-based training around a custom open-weight runtime stack. It is designed as its own build, with a dedicated CLI, behavior bundle system, SFT/LoRA pipeline, safetensors inspection tooling, and verification flow instead of acting like a thin wrapper around a generic chat app.
+
+DeepThinkingFlow includes:
 
 | Component | Description |
 |---|---|
@@ -415,7 +418,7 @@ pip install -r requirements-transformers.txt
 python scripts/deepthinkingflow_cli.py bootstrap-training-env
 
 # If using QLoRA (4-bit quantization):
-pip install bitsandbytes>=0.46.0
+pip install "bitsandbytes>=0.49.2,<1.0.0"
 ```
 
 <details>
@@ -424,19 +427,19 @@ pip install bitsandbytes>=0.46.0
 **Inference:**
 | Package | Version |
 |---|---|
-| transformers | >=4.57.0, <5.0.0 |
-| tokenizers | >=0.21.0, <1.0.0 |
-| huggingface_hub | >=0.35.0, <1.0.0 |
-| safetensors | >=0.6.0, <1.0.0 |
-| jinja2 | >=3.1.0, <4.0.0 |
+| transformers | >=5.5.4, <6.0.0 |
+| tokenizers | >=0.22.2, <1.0.0 |
+| huggingface_hub | >=1.11.0, <2.0.0 |
+| safetensors | >=0.7.0, <1.0.0 |
+| jinja2 | >=3.1.6, <4.0.0 |
 
 **Training (additional):**
 | Package | Version |
 |---|---|
-| torch | >=2.7.0, <3.0.0 |
-| accelerate | >=1.10.0, <2.0.0 |
-| datasets | >=4.0.0, <5.0.0 |
-| peft | >=0.17.0, <1.0.0 |
+| torch | >=2.11.0, <3.0.0 |
+| accelerate | >=1.13.0, <2.0.0 |
+| datasets | >=4.8.4, <5.0.0 |
+| peft | >=0.19.1, <1.0.0 |
 
 </details>
 
@@ -467,6 +470,66 @@ python scripts/deepthinkingflow_cli.py assemble-model-dir
 python scripts/deepthinkingflow_cli.py inspect-weights --path original/model.safetensors
 ```
 
+## External Hosts
+
+DeepThinkingFlow no longer ships its own frontend shell. The supported project surface is the Python CLI plus exported runtime assets.
+
+### Claude Code
+
+Use the repo directly inside Claude Code and call the Python entrypoints:
+
+```bash
+python scripts/deepthinkingflow_cli.py system-check
+python scripts/deepthinkingflow_cli.py validate-bundle
+python scripts/deepthinkingflow_cli.py chat
+```
+
+If you want a prebuilt runtime prompt payload for an external host:
+
+```bash
+python scripts/deepthinkingflow_cli.py export-runtime --target claude-code
+```
+
+This writes `system_prompt.txt`, `request.json`, and `request.txt` into `out/external-runtime/claude-code/`.
+
+### Ollama
+
+DeepThinkingFlow can export a runtime-only bridge for Ollama:
+
+```bash
+python scripts/deepthinkingflow_cli.py export-runtime \
+  --target ollama \
+  --ollama-model llama3.1:8b
+```
+
+This writes a `Modelfile` plus prompt assets into `out/external-runtime/ollama/`.
+
+If you want the export step to fail immediately when Ollama is not installed:
+
+```bash
+python scripts/deepthinkingflow_cli.py export-runtime \
+  --target ollama \
+  --ollama-model llama3.1:8b \
+  --fail-if-host-missing
+```
+
+Important:
+
+- This is a **runtime-only** integration.
+- It does **not** convert `model.safetensors` into an Ollama-native model by itself.
+- Ollama still needs a valid base model tag such as `llama3.1:8b`, `qwen2.5:7b`, or another model already supported by your Ollama install.
+- If you want to run the original DeepThinkingFlow weights directly in Ollama, you still need a separate conversion path to an Ollama-compatible format.
+
+### Production Notes
+
+- `export-runtime` is a bridge layer, not a training or merge step.
+- `train_transformers_deepthinkingflow_lora.py` now hard-fails on duplicate target modules, invalid numeric knobs, missing resume checkpoints, and overlapping train/eval rows.
+- External host compatibility is now explicit rather than implied: `runtime-only` claims stay outside weight-level claims.
+- `preflight-all` gives one consolidated JSON snapshot over bundle health, runtime soft gates, training feasibility, dependency presence, and external-host readiness.
+- `verify` is the shortest release-style local check because it combines bundle validation, project preflight, and the smoke suite.
+- `release-manifest` turns verify/artifact state into a release-oriented JSON manifest.
+- `.github/workflows/verify.yml` runs the core verification path automatically on push and pull request.
+
 ### 4. Interactive chat
 
 ```bash
@@ -485,13 +548,32 @@ python scripts/deepthinkingflow_cli.py run --user "Explain MoE architecture"
 python scripts/deepthinkingflow_cli.py validate-bundle behavior/DeepThinkingFlow
 ```
 
-### 7. Prepare combined training assets
+### 7. Run consolidated project preflight
+
+```bash
+python scripts/deepthinkingflow_cli.py preflight-all
+```
+
+### 8. Run consolidated verification
+
+```bash
+python scripts/deepthinkingflow_cli.py verify
+```
+
+### 9. Build a release manifest
+
+```bash
+python scripts/deepthinkingflow_cli.py release-manifest \
+  --output out/release-manifest.json
+```
+
+### 10. Prepare combined training assets
 
 ```bash
 python scripts/deepthinkingflow_cli.py prepare-training-assets
 ```
 
-### 8. Report artifact hashes and claim level
+### 11. Report artifact hashes and claim level
 
 ```bash
 python scripts/deepthinkingflow_cli.py report-artifacts \
@@ -524,6 +606,9 @@ python scripts/deepthinkingflow_cli.py <command> [args]
 | `prepare-training-assets` | `prepare_deepthinkingflow_training_assets.py` | Build combined train/eval with skill compliance splits |
 | `generate-skill-compliance` | `generate_skill_compliance_corpus.py` | Regenerate expanded skill-compliance dataset and eval corpus |
 | `train-lora` | `train_transformers_deepthinkingflow_lora.py` | Train LoRA/QLoRA adapter with dry-run support |
+| `preflight-all` | `preflight_deepthinkingflow_project.py` | Consolidated preflight across bundle, runtime, training, and external hosts |
+| `verify` | `verify_deepthinkingflow_project.py` | Consolidated verification across bundle validation, preflight, and smoke tests |
+| `release-manifest` | `build_release_manifest.py` | Release-oriented manifest combining verify and artifact state |
 | `eval` | `evaluate_reasoning_outputs.py` | Score outputs against trait + rubric checklist |
 | `report-artifacts` | `report_deepthinkingflow_artifacts.py` | Hash artifacts and classify claim level |
 

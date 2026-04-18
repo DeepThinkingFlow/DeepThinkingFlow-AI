@@ -21,15 +21,25 @@ import chat_deepthinkingflow as chat
 import compile_behavior_bundle as compile_bundle
 import deepthinkingflow_cli as cli
 import deepthinkingflow_env as dtf_env
+import export_external_runtime_assets as export_runtime
+import build_external_training_bundle as build_external_bundle
+import export_prepared_chat_jsonl as export_chat_jsonl
+import preflight_deepthinkingflow_project as preflight_project
 import preflight_deepthinkingflow_training as preflight_train
+import build_release_manifest as release_manifest
 import deepthinkingflow_runtime as runtime
+import verify_deepthinkingflow_project as verify_project
 import evaluate_reasoning_outputs as evaluator
 import inspect_safetensors_model as inspector
 import prepare_deepthinkingflow_training_assets as asset_builder
+import doctor_deepthinkingflow as doctor_script
 import report_deepthinkingflow_artifacts as artifact_report
+import run_tiny_smoke_release_lane as tiny_release_lane
 import render_transformers_deepthinkingflow_prompt as render_prompt
 import run_transformers_deepthinkingflow as run_script
+import deepthinkingflow_system_check as system_check
 import train_transformers_deepthinkingflow_lora as train_script
+import train_deepthinkingflow_staged as staged_train
 import validate_behavior_bundle as bundle_validator
 
 
@@ -121,6 +131,56 @@ class CliSmokeTest(unittest.TestCase):
     def test_compile_bundle_command_is_registered(self) -> None:
         self.assertIn("compile-bundle", cli.COMMANDS)
 
+    def test_system_check_command_is_registered(self) -> None:
+        self.assertIn("system-check", cli.COMMANDS)
+
+    def test_export_runtime_command_is_registered(self) -> None:
+        self.assertIn("export-runtime", cli.COMMANDS)
+
+    def test_preflight_all_command_is_registered(self) -> None:
+        self.assertIn("preflight-all", cli.COMMANDS)
+
+    def test_doctor_command_is_registered(self) -> None:
+        self.assertIn("doctor", cli.COMMANDS)
+
+    def test_verify_command_is_registered(self) -> None:
+        self.assertIn("verify", cli.COMMANDS)
+
+    def test_tiny_smoke_release_command_is_registered(self) -> None:
+        self.assertIn("tiny-smoke-release", cli.COMMANDS)
+
+    def test_prepare_datasets_command_is_registered(self) -> None:
+        self.assertIn("prepare-datasets", cli.COMMANDS)
+
+    def test_export_chat_jsonl_command_is_registered(self) -> None:
+        self.assertIn("export-chat-jsonl", cli.COMMANDS)
+
+    def test_build_external_train_bundle_command_is_registered(self) -> None:
+        self.assertIn("build-external-train-bundle", cli.COMMANDS)
+
+    def test_release_manifest_command_is_registered(self) -> None:
+        self.assertIn("release-manifest", cli.COMMANDS)
+
+
+class SystemCheckSmokeTest(unittest.TestCase):
+    def test_format_warning_lines_is_soft_gate(self) -> None:
+        report = {
+            "profile": "inference",
+            "warnings": [
+                "System RAM is below the suggested minimum.",
+                "No supported NVIDIA GPU was detected.",
+            ],
+        }
+
+        lines = system_check.format_warning_lines(report)
+
+        self.assertIn("soft gate", "\n".join(lines))
+        self.assertGreaterEqual(len(lines), 3)
+
+    def test_detect_external_runtime_status_has_expected_keys(self) -> None:
+        status = dtf_env.detect_external_runtime_status()
+        self.assertEqual(set(status), {"ollama", "claude", "claude_code"})
+
 
 class RenderPromptSmokeTest(unittest.TestCase):
     def test_render_prompt_main_with_fake_tokenizer(self) -> None:
@@ -163,6 +223,57 @@ class RenderPromptSmokeTest(unittest.TestCase):
         self.assertEqual(payload["rendered_prompt"], "RENDERED::high::Xin chao")
 
 
+class ExternalRuntimeExportSmokeTest(unittest.TestCase):
+    def test_export_ollama_assets_writes_runtime_only_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stdout = io.StringIO()
+            argv = [
+                "export_external_runtime_assets.py",
+                "--bundle",
+                BUNDLE_DIR,
+                "--target",
+                "ollama",
+                "--ollama-model",
+                "llama3.1:8b",
+                "--output-dir",
+                tmpdir,
+            ]
+
+            with mock.patch.object(sys, "argv", argv):
+                with contextlib.redirect_stdout(stdout):
+                    result = export_runtime.main()
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(result, 0)
+            self.assertEqual(payload["schema_version"], "dtf-external-runtime-export/v2")
+            self.assertEqual(payload["target"], "ollama")
+            self.assertEqual(payload["claim_level"], "runtime-only")
+            self.assertIn("Modelfile", payload["created_files"])
+            self.assertEqual(len(payload["file_reports"]), len(payload["created_files"]))
+            self.assertTrue((Path(tmpdir) / "system_prompt.txt").is_file())
+            self.assertTrue((Path(tmpdir) / "request.json").is_file())
+            self.assertTrue((Path(tmpdir) / "Modelfile").is_file())
+            self.assertIn("FROM llama3.1:8b", (Path(tmpdir) / "Modelfile").read_text(encoding="utf-8"))
+
+    def test_export_runtime_can_fail_fast_when_host_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            argv = [
+                "export_external_runtime_assets.py",
+                "--bundle",
+                BUNDLE_DIR,
+                "--target",
+                "ollama",
+                "--fail-if-host-missing",
+                "--output-dir",
+                tmpdir,
+            ]
+            with mock.patch.object(export_runtime, "detect_external_runtime_status", return_value={"ollama": False, "claude": False, "claude_code": False}):
+                with mock.patch.object(sys, "argv", argv):
+                    with self.assertRaises(SystemExit) as ctx:
+                        export_runtime.main()
+        self.assertIn("target=ollama", str(ctx.exception))
+
+
 class RunSmokeTest(unittest.TestCase):
     def test_run_main_returns_expected_json_without_loading_real_model(self) -> None:
         stdout = io.StringIO()
@@ -179,21 +290,28 @@ class RunSmokeTest(unittest.TestCase):
             "--include-raw-completion",
         ]
 
-        with mock.patch.object(run_script, "build_low_memory_warning_payload", return_value=None):
-            with mock.patch.object(run_script, "load_model_and_tokenizer", return_value=("TOKENIZER", "MODEL")):
-                with mock.patch.object(run_script, "render_prompt", return_value="PROMPT") as render_mock:
-                    with mock.patch.object(
-                        run_script,
-                        "generate_response",
-                        return_value={
-                            "analysis_text": "phan tich test",
-                            "final_text": "ket qua test",
-                            "decoded_completion": "RAW",
-                        },
-                    ) as generate_mock:
-                        with mock.patch.object(sys, "argv", argv):
-                            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                                result = run_script.main()
+        fake_report = {"profile": "inference", "warnings": ["System RAM is below the suggested minimum."]}
+        with mock.patch.object(run_script, "build_system_report", return_value=fake_report):
+            with mock.patch.object(
+                run_script,
+                "format_system_warning_lines",
+                return_value=["[warn] test system warning"],
+            ):
+                with mock.patch.object(run_script, "build_low_memory_warning_payload", return_value=None):
+                    with mock.patch.object(run_script, "load_model_and_tokenizer", return_value=("TOKENIZER", "MODEL")):
+                        with mock.patch.object(run_script, "render_prompt", return_value="PROMPT") as render_mock:
+                            with mock.patch.object(
+                                run_script,
+                                "generate_response",
+                                return_value={
+                                    "analysis_text": "phan tich test",
+                                    "final_text": "ket qua test",
+                                    "decoded_completion": "RAW",
+                                },
+                            ) as generate_mock:
+                                with mock.patch.object(sys, "argv", argv):
+                                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                                        result = run_script.main()
 
         payload = json.loads(stdout.getvalue())
         self.assertEqual(result, 0)
@@ -202,7 +320,7 @@ class RunSmokeTest(unittest.TestCase):
         self.assertEqual(payload["decoded_completion"], "RAW")
         render_mock.assert_called_once()
         generate_mock.assert_called_once()
-        self.assertEqual(stderr.getvalue(), "")
+        self.assertIn("[warn] test system warning", stderr.getvalue())
 
 
 class ChatSmokeTest(unittest.TestCase):
@@ -228,28 +346,30 @@ class ChatSmokeTest(unittest.TestCase):
                 "decoded_completion": "RAW",
             }
 
-        with mock.patch.object(chat, "build_low_memory_warning_payload", return_value=None):
-            with mock.patch.object(chat, "load_model_and_tokenizer", return_value=("TOKENIZER", "MODEL")):
-                with mock.patch.object(
-                    chat,
-                    "generate_response",
-                    side_effect=fake_generate_response,
-                ) as generate_mock:
-                    with mock.patch(
-                        "builtins.input",
-                        side_effect=[
-                            "/status",
-                            "/analysis on",
-                            "/reasoning medium",
-                            "Xin chao",
-                            "/history",
-                            "/clear",
-                            "/quit",
-                        ],
-                    ):
-                        with mock.patch.object(sys, "argv", argv):
-                            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                                result = chat.main()
+        with mock.patch.object(chat, "build_system_report", return_value={"profile": "inference", "warnings": []}):
+            with mock.patch.object(chat, "format_system_warning_lines", return_value=[]):
+                with mock.patch.object(chat, "build_low_memory_warning_payload", return_value=None):
+                    with mock.patch.object(chat, "load_model_and_tokenizer", return_value=("TOKENIZER", "MODEL")):
+                        with mock.patch.object(
+                            chat,
+                            "generate_response",
+                            side_effect=fake_generate_response,
+                        ) as generate_mock:
+                            with mock.patch(
+                                "builtins.input",
+                                side_effect=[
+                                    "/status",
+                                    "/analysis on",
+                                    "/reasoning medium",
+                                    "Xin chao",
+                                    "/history",
+                                    "/clear",
+                                    "/quit",
+                                ],
+                            ):
+                                with mock.patch.object(sys, "argv", argv):
+                                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                                        result = chat.main()
 
         output = stdout.getvalue()
         self.assertEqual(result, 0)
@@ -381,6 +501,418 @@ class TrainDryRunSmokeTest(unittest.TestCase):
         trainable = train_script.count_trainable_parameters(FakeModel())
         self.assertEqual(trainable["trainable_params"], 10)
         self.assertEqual(trainable["total_params"], 100)
+
+    def test_validate_config_rejects_duplicate_target_modules(self) -> None:
+        config = train_script.normalize_config(
+            {
+                "model_name_or_path": MODEL_DIR,
+                "dataset_path": str((ROOT_DIR / "behavior" / "DeepThinkingFlow" / "training" / "harmony_sft_plus_skill_compliance_vi.train.jsonl").resolve()),
+                "output_dir": str((ROOT_DIR / "out" / "dup-target-test").resolve()),
+                "bf16": True,
+                "num_train_epochs": 1,
+                "per_device_train_batch_size": 1,
+                "gradient_accumulation_steps": 1,
+                "learning_rate": 1e-4,
+                "max_seq_length": 256,
+                "lora_r": 8,
+                "lora_alpha": 16,
+                "lora_dropout": 0.05,
+                "target_modules": ["q_proj", "q_proj"],
+                "reasoning_effort": "high",
+            }
+        )
+        with self.assertRaises(ValueError):
+            train_script.validate_config(config)
+
+    def test_ensure_disjoint_splits_rejects_overlap(self) -> None:
+        row = {"messages": [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]}
+        with self.assertRaises(ValueError):
+            train_script.ensure_disjoint_splits([row], [row])
+
+    def test_staged_train_reports_missing_external_inputs_early(self) -> None:
+        config = {
+            "dataset_path": "data/external-train.jsonl",
+            "eval_dataset_path": "data/external-eval.jsonl",
+        }
+        with self.assertRaises(SystemExit) as ctx:
+            staged_train.ensure_stage_inputs_exist(config, Path("training/DeepThinkingFlow-lora/config.external-local-safe.stage1.json"))
+        self.assertIn("Build the dataset assets first", str(ctx.exception))
+
+
+class ProjectPreflightSmokeTest(unittest.TestCase):
+    def test_project_preflight_returns_schema_and_ready_block(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "preflight_deepthinkingflow_project.py",
+            "--bundle",
+            BUNDLE_DIR,
+            "--model-dir",
+            MODEL_DIR,
+            "--training-config",
+            str((ROOT_DIR / "training" / "DeepThinkingFlow-lora" / "config.example.json").resolve()),
+        ]
+
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = preflight_project.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["schema_version"], "dtf-project-preflight/v1")
+        self.assertIn("bundle_validation", payload)
+        self.assertIn("training_feasibility", payload)
+        self.assertIn("ready", payload)
+        self.assertIn("status", payload)
+        self.assertIn("external_runtime_status", payload["status"])
+        self.assertFalse(payload["claim_boundary"]["raw_base_checkpoint_can_be_described_as_skill_aligned"])
+        self.assertTrue(payload["claim_boundary"]["weight_level_adherence_requires_training_artifacts"])
+
+
+class DoctorSmokeTest(unittest.TestCase):
+    def test_doctor_returns_precondition_failed_when_host_is_not_ready(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "doctor_deepthinkingflow.py",
+            "--bundle",
+            BUNDLE_DIR,
+            "--model-dir",
+            MODEL_DIR,
+            "--training-config",
+            str((ROOT_DIR / "training" / "DeepThinkingFlow-lora" / "config.example.json").resolve()),
+        ]
+
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = doctor_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 6)
+        self.assertEqual(payload["schema_version"], "dtf-doctor-report/v1")
+        self.assertIn("doctor", payload)
+        self.assertTrue(payload["doctor"]["project_ready_for_runtime_only_release"])
+        self.assertFalse(payload["doctor"]["project_ready_for_local_host_training"])
+        self.assertTrue(payload["doctor"]["issues"])
+
+
+class TinySmokeReleaseLaneTest(unittest.TestCase):
+    def test_tiny_smoke_release_lane_orchestrates_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tiny_config = Path(tmpdir) / "config.tiny.json"
+            artifact_report = Path(tmpdir) / "artifacts.json"
+            verify_report = Path(tmpdir) / "verify.json"
+            release_manifest = Path(tmpdir) / "release.json"
+            tiny_config.write_text(
+                json.dumps(
+                    {
+                        "model_name_or_path": "runtime/transformers/DeepThinkingFlow-tiny-smoke",
+                        "output_dir": str(Path(tmpdir) / "adapter"),
+                        "dataset_path": "behavior/DeepThinkingFlow/training/harmony_sft_plus_skill_compliance_vi.train.jsonl",
+                        "eval_dataset_path": "behavior/DeepThinkingFlow/training/harmony_sft_plus_skill_compliance_vi.eval.jsonl",
+                        "behavior_bundle_dir": "behavior/DeepThinkingFlow",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            calls: list[list[str]] = []
+
+            def fake_run(command: list[str], label: str) -> dict[str, object]:
+                calls.append(command)
+                if "report_deepthinkingflow_artifacts.py" in command[1]:
+                    artifact_report.write_text("{}", encoding="utf-8")
+                elif "verify_deepthinkingflow_project.py" in command[1]:
+                    verify_report.write_text("{}", encoding="utf-8")
+                elif "build_release_manifest.py" in command[1]:
+                    release_manifest.write_text("{}", encoding="utf-8")
+                return {"command": command, "stdout": "", "stderr": ""}
+
+            stdout = io.StringIO()
+            argv = [
+                "run_tiny_smoke_release_lane.py",
+                "--tiny-config",
+                str(tiny_config),
+                "--artifact-report",
+                str(artifact_report),
+                "--verify-report",
+                str(verify_report),
+                "--release-manifest",
+                str(release_manifest),
+            ]
+            with mock.patch.object(tiny_release_lane, "run_command", side_effect=fake_run):
+                with mock.patch.object(sys, "argv", argv):
+                    with contextlib.redirect_stdout(stdout):
+                        result = tiny_release_lane.main()
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(result, 0)
+            self.assertEqual(payload["schema_version"], "dtf-tiny-smoke-release-lane/v1")
+            self.assertEqual(len(calls), 4)
+            self.assertEqual(payload["artifact_report"], str(artifact_report))
+            self.assertEqual(payload["verify_report"], str(verify_report))
+            self.assertEqual(payload["release_manifest"], str(release_manifest))
+
+
+class ProjectVerifySmokeTest(unittest.TestCase):
+    def test_verify_project_supports_skip_tests(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "verify_deepthinkingflow_project.py",
+            "--bundle",
+            BUNDLE_DIR,
+            "--model-dir",
+            MODEL_DIR,
+            "--training-config",
+            str((ROOT_DIR / "training" / "DeepThinkingFlow-lora" / "config.example.json").resolve()),
+            "--skip-tests",
+        ]
+
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = verify_project.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["schema_version"], "dtf-verify-report/v2")
+        self.assertIn("generated_at_utc", payload)
+        self.assertIn("environment", payload)
+        self.assertIn("commands", payload)
+        self.assertIn("claim_gate", payload)
+        self.assertTrue(payload["verified"]["bundle_valid"])
+        self.assertTrue(payload["verified"]["preflight_ran"])
+        self.assertTrue(payload["verified"]["tests_passed"])
+        self.assertTrue(payload["verified"]["claim_gate_passed"])
+        self.assertFalse(payload["project_preflight"]["claim_boundary"]["raw_base_checkpoint_can_be_described_as_skill_aligned"])
+
+    def test_verify_project_fails_claim_gate_when_training_ready_missing_artifacts(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "verify_deepthinkingflow_project.py",
+            "--bundle",
+            BUNDLE_DIR,
+            "--model-dir",
+            MODEL_DIR,
+            "--training-config",
+            str((ROOT_DIR / "training" / "DeepThinkingFlow-lora" / "config.example.json").resolve()),
+            "--skip-tests",
+            "--require-claim-level",
+            "training-ready",
+        ]
+
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = verify_project.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 4)
+        self.assertFalse(payload["claim_gate"]["passed"])
+        self.assertIn("below required", payload["claim_gate"]["reasons"][0])
+
+
+class ReleaseManifestSmokeTest(unittest.TestCase):
+    def test_build_release_manifest_from_verify_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            verify_path = Path(tmpdir) / "verify.json"
+            output_path = Path(tmpdir) / "release.json"
+            verify_payload = {
+                "schema_version": "dtf-verify-report/v2",
+                "verified": {
+                    "bundle_valid": True,
+                    "preflight_ran": True,
+                    "tests_passed": True,
+                    "claim_gate_passed": True,
+                },
+                "project_preflight": {
+                    "ready": {
+                        "bundle_valid": True,
+                        "inference_soft_gate_clear": False,
+                        "training_soft_gate_clear": False,
+                        "training_locally_feasible": False,
+                    }
+                },
+                "claim_gate": {"passed": True},
+            }
+            verify_path.write_text(json.dumps(verify_payload, ensure_ascii=False), encoding="utf-8")
+
+            stdout = io.StringIO()
+            argv = [
+                "build_release_manifest.py",
+                "--verify-report",
+                str(verify_path),
+                "--output",
+                str(output_path),
+                "--release-id",
+                "test-release",
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                with contextlib.redirect_stdout(stdout):
+                    result = release_manifest.main()
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(result, 0)
+            self.assertEqual(payload["schema_version"], "dtf-release-manifest/v1")
+            self.assertEqual(payload["release_id"], "test-release")
+            self.assertEqual(payload["release_state"]["claim_level"], "runtime-only")
+            self.assertTrue(payload["release_state"]["claim_gate_passed"])
+            self.assertTrue(payload["release_state"]["release_candidate"])
+            self.assertFalse(payload["release_state"]["local_host_ready"])
+            self.assertEqual(payload["verify_report_ref"]["path"], str(verify_path))
+            self.assertTrue(payload["verify_report_ref"]["sha256"])
+            self.assertTrue(output_path.is_file())
+
+    def test_build_release_manifest_rejects_failed_claim_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            verify_path = Path(tmpdir) / "verify.json"
+            verify_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "dtf-verify-report/v2",
+                        "verified": {
+                            "bundle_valid": True,
+                            "preflight_ran": True,
+                            "tests_passed": True,
+                            "claim_gate_passed": False,
+                        },
+                        "claim_gate": {
+                            "passed": False,
+                            "reasons": ["Artifact lineage is incomplete."],
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            argv = [
+                "build_release_manifest.py",
+                "--verify-report",
+                str(verify_path),
+                "--output",
+                str(Path(tmpdir) / "release.json"),
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                with self.assertRaises(SystemExit) as ctx:
+                    release_manifest.main()
+
+        self.assertIn("claim gate", str(ctx.exception))
+
+
+class StagedTrainingConfigResolutionTest(unittest.TestCase):
+    def test_build_effective_config_resolves_latest_without_mutating_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "out"
+            checkpoint_dir = output_dir / "checkpoint-12"
+            checkpoint_dir.mkdir(parents=True)
+            config = {
+                "output_dir": str(output_dir),
+                "resume_from_checkpoint": "latest",
+            }
+
+            effective = staged_train.build_effective_config(config)
+
+            self.assertEqual(config["resume_from_checkpoint"], "latest")
+            self.assertEqual(effective["resume_from_checkpoint"], str(checkpoint_dir.resolve()))
+
+    def test_write_effective_config_creates_temp_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stage_path = Path(tmpdir) / "config.stage.json"
+            stage_path.write_text('{"resume_from_checkpoint":"latest"}\n', encoding="utf-8")
+
+            temp_path = staged_train.write_effective_config(stage_path, {"resume_from_checkpoint": "checkpoint-1"})
+
+            self.assertNotEqual(temp_path, stage_path)
+            self.assertEqual(json.loads(stage_path.read_text(encoding="utf-8"))["resume_from_checkpoint"], "latest")
+            self.assertEqual(json.loads(temp_path.read_text(encoding="utf-8"))["resume_from_checkpoint"], "checkpoint-1")
+
+
+class PreparedChatExportSmokeTest(unittest.TestCase):
+    def test_export_prepared_chat_jsonl_writes_rows(self) -> None:
+        try:
+            from datasets import Dataset
+        except Exception:
+            self.skipTest("datasets is not installed in the current environment")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_dir = Path(tmpdir) / "prepared"
+            output_jsonl = Path(tmpdir) / "prepared.jsonl"
+            Dataset.from_list(
+                [
+                    {
+                        "messages": [
+                            {"role": "user", "content": "hello"},
+                            {"role": "assistant", "content": "world"},
+                        ],
+                        "text": "hello world",
+                        "source_dataset": "unit-test",
+                    }
+                ]
+            ).save_to_disk(str(dataset_dir))
+
+            stdout = io.StringIO()
+            argv = [
+                "export_prepared_chat_jsonl.py",
+                "--input-dir",
+                str(dataset_dir),
+                "--output-jsonl",
+                str(output_jsonl),
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                with contextlib.redirect_stdout(stdout):
+                    result = export_chat_jsonl.main()
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(result, 0)
+            self.assertEqual(payload["rows_exported"], 1)
+            self.assertTrue(output_jsonl.is_file())
+            rows = output_jsonl.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(rows), 1)
+            exported = json.loads(rows[0])
+            self.assertEqual(exported["source_dataset"], "unit-test")
+            self.assertEqual(exported["messages"][-1]["content"], "world")
+
+
+class ExternalTrainingBundleSmokeTest(unittest.TestCase):
+    def test_build_external_training_bundle_writes_train_eval_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_a = Path(tmpdir) / "a.jsonl"
+            input_b = Path(tmpdir) / "b.jsonl"
+            train_out = Path(tmpdir) / "external-train.jsonl"
+            eval_out = Path(tmpdir) / "external-eval.jsonl"
+
+            rows_a = [
+                {"messages": [{"role": "user", "content": "u1"}, {"role": "assistant", "content": "a1"}], "source_dataset": "a"},
+                {"messages": [{"role": "user", "content": "u2"}, {"role": "assistant", "content": "a2"}], "source_dataset": "a"},
+            ]
+            rows_b = [
+                {"messages": [{"role": "user", "content": "u3"}, {"role": "assistant", "content": "a3"}], "source_dataset": "b"},
+                {"messages": [{"role": "user", "content": "u4"}, {"role": "assistant", "content": "a4"}], "source_dataset": "b"},
+            ]
+            input_a.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows_a) + "\n", encoding="utf-8")
+            input_b.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows_b) + "\n", encoding="utf-8")
+
+            stdout = io.StringIO()
+            argv = [
+                "build_external_training_bundle.py",
+                "--input-jsonl",
+                str(input_a),
+                "--input-jsonl",
+                str(input_b),
+                "--train-output",
+                str(train_out),
+                "--eval-output",
+                str(eval_out),
+                "--eval-ratio",
+                "0.25",
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                with contextlib.redirect_stdout(stdout):
+                    result = build_external_bundle.main()
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(result, 0)
+            self.assertEqual(payload["train_rows"], 3)
+            self.assertEqual(payload["eval_rows"], 1)
+            self.assertTrue(train_out.is_file())
+            self.assertTrue(eval_out.is_file())
 
 
 class TrainingAssetBuilderTest(unittest.TestCase):
@@ -562,6 +1094,50 @@ class ArtifactReportSmokeTest(unittest.TestCase):
             )
 
         self.assertEqual(claim_level, "learned-only-after-training")
+
+    def test_artifact_report_builds_lineage_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bundle_dir = root / "behavior" / "DeepThinkingFlow"
+            training_dir = bundle_dir / "training"
+            bundle_dir.mkdir(parents=True)
+            training_dir.mkdir(parents=True)
+            (bundle_dir / "profile.json").write_text("{}", encoding="utf-8")
+            (bundle_dir / "system_prompt.txt").write_text("system", encoding="utf-8")
+
+            train_dataset = training_dir / "train.jsonl"
+            eval_dataset = training_dir / "eval.jsonl"
+            train_dataset.write_text("{}\n", encoding="utf-8")
+            eval_dataset.write_text("{}\n", encoding="utf-8")
+
+            config_path = root / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "dataset_path": str(train_dataset),
+                        "eval_dataset_path": str(eval_dataset),
+                        "behavior_bundle_dir": str(bundle_dir),
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            lineage = artifact_report.build_lineage_status(
+                training_config_payload=artifact_report.load_training_config(config_path),
+                train_dataset=artifact_report.collect_path_report(train_dataset),
+                eval_dataset=artifact_report.collect_path_report(eval_dataset),
+                behavior_bundle=artifact_report.collect_path_report(bundle_dir),
+                base_weights={"path": str(root / "model.safetensors")},
+                adapter_dir={"path": str(root / "adapter")},
+                eval_output={"path": str(root / "eval.json")},
+            )
+
+        self.assertTrue(lineage["config_dataset_match"])
+        self.assertTrue(lineage["config_eval_dataset_match"])
+        self.assertTrue(lineage["config_bundle_match"])
+        self.assertTrue(lineage["lineage_complete_for_training_claim"])
+        self.assertTrue(lineage["lineage_complete_for_learned_claim"])
 
 
 class EnvHelpersTest(unittest.TestCase):

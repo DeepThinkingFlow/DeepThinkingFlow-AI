@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import json
 import random
 from dataclasses import dataclass
@@ -85,6 +86,39 @@ def validate_messages(rows: list[dict[str, Any]], label: str) -> None:
             raise ValueError(f"{label} row {idx} assistant thinking must be a string.")
 
 
+def ensure_string_list(values: list[Any], label: str) -> list[str]:
+    if not isinstance(values, list) or not values:
+        raise ValueError(f"{label} must be a non-empty list.")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for index, value in enumerate(values, start=1):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{label}[{index}] must be a non-empty string.")
+        item = value.strip()
+        if item in seen:
+            raise ValueError(f"{label} contains a duplicate entry: {item}")
+        seen.add(item)
+        normalized.append(item)
+    return normalized
+
+
+def dataset_row_fingerprints(rows: list[dict[str, Any]]) -> set[str]:
+    return {
+        json.dumps(row, ensure_ascii=False, sort_keys=True)
+        for row in rows
+    }
+
+
+def ensure_disjoint_splits(train_rows: list[dict[str, Any]], eval_rows: list[dict[str, Any]]) -> None:
+    if not eval_rows:
+        return
+    overlap = dataset_row_fingerprints(train_rows) & dataset_row_fingerprints(eval_rows)
+    if overlap:
+        raise ValueError(
+            f"Train/eval datasets are not disjoint. Found {len(overlap)} overlapping example(s)."
+        )
+
+
 def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     cfg = dict(config)
     cfg.setdefault("behavior_bundle_dir", "")
@@ -98,6 +132,7 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     cfg.setdefault("fp16", False)
     cfg.setdefault("weight_decay", 0.01)
     cfg.setdefault("warmup_ratio", 0.03)
+    cfg.setdefault("warmup_steps", 0)
     cfg.setdefault("logging_steps", 10)
     cfg.setdefault("eval_steps", 100)
     cfg.setdefault("save_steps", 100)
@@ -147,8 +182,9 @@ def validate_config(config: dict[str, Any]) -> None:
     )
     if config["reasoning_effort"] not in {"low", "medium", "high"}:
         raise ValueError("reasoning_effort must be one of: low, medium, high")
-    if not config["target_modules"]:
-        raise ValueError("target_modules must not be empty")
+    config["target_modules"] = ensure_string_list(config["target_modules"], "target_modules")
+    if config.get("target_parameters"):
+        config["target_parameters"] = ensure_string_list(config["target_parameters"], "target_parameters")
     if config["eval_dataset_path"] and config["val_split_ratio"] not in (0, 0.0):
         raise ValueError("Use either eval_dataset_path or val_split_ratio, not both.")
     if not config["eval_dataset_path"] and not (0 <= float(config["val_split_ratio"]) < 1):
@@ -157,12 +193,34 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("use_qlora=true requires load_in_4bit=true.")
     if config["bf16"] and config.get("fp16", False):
         raise ValueError("Choose bf16 or fp16, not both.")
+    if int(config.get("warmup_steps", 0)) < 0:
+        raise ValueError("warmup_steps must be >= 0.")
+    if float(config["warmup_ratio"]) < 0:
+        raise ValueError("warmup_ratio must be >= 0.")
     if config["early_stopping_patience"] < 1:
         raise ValueError("early_stopping_patience must be >= 1.")
     if int(config["min_target_module_matches"]) < 1:
         raise ValueError("min_target_module_matches must be >= 1.")
     if int(config["min_trainable_params"]) < 1:
         raise ValueError("min_trainable_params must be >= 1.")
+    if float(config["num_train_epochs"]) <= 0:
+        raise ValueError("num_train_epochs must be > 0.")
+    if int(config["per_device_train_batch_size"]) < 1:
+        raise ValueError("per_device_train_batch_size must be >= 1.")
+    if int(config["gradient_accumulation_steps"]) < 1:
+        raise ValueError("gradient_accumulation_steps must be >= 1.")
+    if float(config["learning_rate"]) <= 0:
+        raise ValueError("learning_rate must be > 0.")
+    if int(config["max_seq_length"]) < 32:
+        raise ValueError("max_seq_length must be >= 32.")
+    if int(config["lora_r"]) < 1:
+        raise ValueError("lora_r must be >= 1.")
+    if int(config["lora_alpha"]) < 1:
+        raise ValueError("lora_alpha must be >= 1.")
+    if not (0 <= float(config["lora_dropout"]) < 1):
+        raise ValueError("lora_dropout must be in [0, 1).")
+    if not isinstance(config["report_to"], list):
+        raise ValueError("report_to must be a list.")
 
     model_path = Path(config["model_name_or_path"]).resolve()
     if model_path.exists():
@@ -174,6 +232,9 @@ def validate_config(config: dict[str, Any]) -> None:
             ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin"],
             "model weights",
         )
+    output_dir = Path(config["output_dir"]).resolve()
+    if output_dir == model_path:
+        raise ValueError("output_dir must not be the same path as model_name_or_path.")
 
     dataset_path = Path(config["dataset_path"]).resolve()
     ensure_file(dataset_path, "training dataset")
@@ -196,6 +257,10 @@ def validate_config(config: dict[str, Any]) -> None:
         actual_eval_dataset_path = str(Path(config["eval_dataset_path"]).resolve())
         if expected_eval_dataset_path != actual_eval_dataset_path:
             raise ValueError("eval_dataset_path does not match expected_eval_dataset_path")
+    if config["resume_from_checkpoint"]:
+        checkpoint_path = Path(config["resume_from_checkpoint"]).resolve()
+        if not checkpoint_path.exists():
+            raise ValueError("resume_from_checkpoint does not exist.")
 
 
 def split_rows(rows: list[dict[str, Any]], val_ratio: float, seed: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -367,6 +432,26 @@ def count_trainable_parameters(model) -> dict[str, Any]:
     }
 
 
+def estimate_warmup_steps(
+    *,
+    train_examples: int,
+    per_device_train_batch_size: int,
+    gradient_accumulation_steps: int,
+    num_train_epochs: float,
+    explicit_warmup_steps: int,
+    warmup_ratio: float,
+) -> int:
+    if explicit_warmup_steps > 0:
+        return explicit_warmup_steps
+    if warmup_ratio <= 0 or train_examples <= 0:
+        return 0
+    micro_batch = max(1, per_device_train_batch_size)
+    accumulation = max(1, gradient_accumulation_steps)
+    update_steps_per_epoch = max(1, math.ceil(train_examples / micro_batch / accumulation))
+    total_steps = max(1, math.ceil(update_steps_per_epoch * num_train_epochs))
+    return max(0, int(round(total_steps * warmup_ratio)))
+
+
 def main() -> int:
     injected_site_packages = inject_local_site_packages()
     args = parse_args()
@@ -387,9 +472,11 @@ def main() -> int:
             float(config["val_split_ratio"]),
             int(config["seed"]),
         )
+    ensure_disjoint_splits(train_rows, eval_rows)
 
     train_rows = take_limit(train_rows, int(config["max_train_samples"]))
     eval_rows = take_limit(eval_rows, int(config["max_eval_samples"]))
+    ensure_disjoint_splits(train_rows, eval_rows)
 
     summary = {
         "config": str(config_path),
@@ -462,6 +549,14 @@ def main() -> int:
     summary["dropped_eval_examples"] = dropped_eval
     summary["tokenizer_precheck"] = "ok"
     summary["first_train_render_preview"] = processed_train[0]["text"][:1400]
+    summary["resolved_warmup_steps"] = estimate_warmup_steps(
+        train_examples=len(processed_train),
+        per_device_train_batch_size=int(config["per_device_train_batch_size"]),
+        gradient_accumulation_steps=int(config["gradient_accumulation_steps"]),
+        num_train_epochs=float(config["num_train_epochs"]),
+        explicit_warmup_steps=int(config.get("warmup_steps", 0)),
+        warmup_ratio=float(config["warmup_ratio"]),
+    )
 
     output_dir = Path(config["output_dir"]).resolve()
     write_run_manifest(output_dir, summary)
@@ -519,7 +614,7 @@ def main() -> int:
         )
 
     model_kwargs = {
-        "torch_dtype": training_dtype,
+        "dtype": training_dtype,
         "use_cache": False,
         "attn_implementation": config["attn_implementation"],
     }
@@ -579,7 +674,7 @@ def main() -> int:
         gradient_accumulation_steps=int(config["gradient_accumulation_steps"]),
         learning_rate=float(config["learning_rate"]),
         weight_decay=float(config["weight_decay"]),
-        warmup_ratio=float(config["warmup_ratio"]),
+        warmup_steps=int(summary["resolved_warmup_steps"]),
         logging_steps=int(config["logging_steps"]),
         eval_strategy="steps" if eval_dataset is not None else "no",
         save_strategy="steps",
@@ -643,7 +738,7 @@ def main() -> int:
     if config["merge_after_train"]:
         base_model = AutoModelForCausalLM.from_pretrained(
             config["model_name_or_path"],
-            torch_dtype=torch.bfloat16 if config["bf16"] else torch.float16,
+            dtype=torch.bfloat16 if config["bf16"] else torch.float16,
             device_map="auto",
             attn_implementation=config["attn_implementation"],
         )

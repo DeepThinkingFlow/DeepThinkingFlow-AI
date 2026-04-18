@@ -69,6 +69,8 @@ def estimate_local_weight_size_gib(model_dir: Path) -> float | None:
     if not model_dir.exists():
         return None
     weight_files = sorted(model_dir.glob("model-*.safetensors"))
+    if not weight_files and (model_dir / "model.safetensors").is_file():
+        weight_files = [model_dir / "model.safetensors"]
     if not weight_files:
         return None
     total = sum(path.stat().st_size for path in weight_files)
@@ -162,14 +164,14 @@ def load_model_and_tokenizer(
     model_ref: str,
     *,
     device_map: str,
-    torch_dtype: str,
+    dtype: str,
     attn_implementation: str | None,
 ) -> tuple[Any, Any]:
     AutoModelForCausalLM, AutoTokenizer = import_transformers_runtime()
     tokenizer = AutoTokenizer.from_pretrained(model_ref)
 
     model_kwargs: dict[str, Any] = {
-        "torch_dtype": torch_dtype,
+        "dtype": dtype,
         "device_map": device_map,
     }
     if attn_implementation:
