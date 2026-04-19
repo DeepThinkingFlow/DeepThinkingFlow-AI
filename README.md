@@ -1530,6 +1530,11 @@ This project is released under the [GNU General Public License v3.0](LICENSE).
 
 ---
 
+**#Full file**
+URL:https://huggingface.co/3edq9e/Deepthinkingflowaimodel
+
+---
+
 <p align="center">
   <strong>DeepThinkingFlow-AI</strong> -- by <a href="https://github.com/danggiaminh">Dang Gia Minh</a><br/>
   <sub>Runtime steering | Bilingual reasoning | Adapter-based fine-tuning | Skill compliance | Open source</sub>
