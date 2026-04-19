@@ -88,6 +88,15 @@ def load_training_config(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_optional_artifact_json(raw_path: str) -> dict[str, Any] | None:
+    if not raw_path:
+        return None
+    path = Path(raw_path).resolve()
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def build_lineage_status(
     *,
     training_config_payload: dict[str, Any] | None,
@@ -159,6 +168,42 @@ def build_claim_evidence(
     }
 
 
+def build_quality_signals(
+    *,
+    eval_output_payload: dict[str, Any] | None,
+    compare_report_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    trait_pass_rate = None if eval_output_payload is None else eval_output_payload.get("trait_pass_rate")
+    rubric_pass_rate = None if eval_output_payload is None else eval_output_payload.get("rubric_pass_rate")
+    compare_available = compare_report_payload is not None
+    not_worse_trait = None if compare_report_payload is None else compare_report_payload.get(
+        "candidate_is_not_worse_on_trait_pass_rate"
+    )
+    not_worse_rubric = None if compare_report_payload is None else compare_report_payload.get(
+        "candidate_is_not_worse_on_rubric_pass_rate"
+    )
+    not_worse_every_case_trait = None if compare_report_payload is None else compare_report_payload.get(
+        "candidate_is_not_worse_on_every_shared_case_trait_count"
+    )
+    not_worse_every_case_rubric = None if compare_report_payload is None else compare_report_payload.get(
+        "candidate_is_not_worse_on_every_shared_case_rubric_count"
+    )
+    candidate_quality_is_non_regressing = bool(not_worse_trait) and bool(not_worse_rubric)
+    return {
+        "eval_output_parsed": eval_output_payload is not None,
+        "compare_report_parsed": compare_available,
+        "trait_pass_rate": trait_pass_rate,
+        "rubric_pass_rate": rubric_pass_rate,
+        "candidate_is_not_worse_on_trait_pass_rate": not_worse_trait,
+        "candidate_is_not_worse_on_rubric_pass_rate": not_worse_rubric,
+        "candidate_is_not_worse_on_every_shared_case_trait_count": not_worse_every_case_trait,
+        "candidate_is_not_worse_on_every_shared_case_rubric_count": not_worse_every_case_rubric,
+        "candidate_quality_is_non_regressing": candidate_quality_is_non_regressing if compare_available else None,
+        "learned_claim_has_quality_regression_risk": compare_available and not candidate_quality_is_non_regressing,
+        "semantic_skill_compliance_still_unproven": compare_available and not candidate_quality_is_non_regressing,
+    }
+
+
 def claim_notes(claim_level: str) -> list[str]:
     notes = {
         "runtime-only": [
@@ -198,6 +243,8 @@ def main() -> int:
     eval_output = maybe_collect(args.eval_output)
     compare_report = maybe_collect(args.compare_report)
     training_config_payload = load_training_config(Path(args.training_config).resolve()) if args.training_config else None
+    eval_output_payload = load_optional_artifact_json(args.eval_output)
+    compare_report_payload = load_optional_artifact_json(args.compare_report)
     claim_level = detect_claim_level(base_weights, adapter_dir, eval_output, compare_report)
     lineage_status = build_lineage_status(
         training_config_payload=training_config_payload,
@@ -227,6 +274,10 @@ def main() -> int:
             adapter_dir=adapter_dir,
             eval_output=eval_output,
             compare_report=compare_report,
+        ),
+        "quality_signals": build_quality_signals(
+            eval_output_payload=eval_output_payload,
+            compare_report_payload=compare_report_payload,
         ),
         "claim_notes": claim_notes(claim_level),
     }

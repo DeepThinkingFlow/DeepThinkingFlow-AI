@@ -30,6 +30,15 @@ jobs:
         run: |
           python scripts/verify_deepthinkingflow_project.py --skip-tests --output /tmp/dtf-verify.json
 
+      - name: Runtime benchmark
+        run: |
+          python scripts/benchmark_deepthinkingflow_runtime.py --iterations 3 --warmup 1 --output /tmp/dtf-benchmark.json
+
+      - name: Behavior asset refresh
+        run: |
+          python scripts/generate_skill_compliance_corpus.py
+          python scripts/prepare_deepthinkingflow_training_assets.py
+
       - name: Project preflight
         run: |
           python scripts/preflight_deepthinkingflow_project.py > /tmp/dtf-preflight.json
@@ -37,6 +46,14 @@ jobs:
       - name: Release manifest
         run: |
           python scripts/build_release_manifest.py --verify-report /tmp/dtf-verify.json --output /tmp/dtf-release-manifest.json
+
+      - name: Promotion readiness
+        run: |
+          python scripts/check_promotion_readiness.py --claim-level runtime-only --verify-report /tmp/dtf-verify.json --release-manifest /tmp/dtf-release-manifest.json --output /tmp/dtf-promotion-ready.json
+
+      - name: Lineage summary
+        run: |
+          python scripts/aggregate_deepthinkingflow_runs.py --search-root out --output /tmp/dtf-lineage.json
 
       - name: Tiny smoke release lane
         run: |

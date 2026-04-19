@@ -27,6 +27,9 @@ import export_prepared_chat_jsonl as export_chat_jsonl
 import preflight_deepthinkingflow_project as preflight_project
 import preflight_deepthinkingflow_training as preflight_train
 import build_release_manifest as release_manifest
+import aggregate_deepthinkingflow_runs as aggregate_runs
+import benchmark_deepthinkingflow_runtime as benchmark_runtime
+import check_promotion_readiness as promotion_readiness
 import deepthinkingflow_runtime as runtime
 import verify_deepthinkingflow_project as verify_project
 import evaluate_reasoning_outputs as evaluator
@@ -34,6 +37,8 @@ import inspect_safetensors_model as inspector
 import prepare_deepthinkingflow_training_assets as asset_builder
 import doctor_deepthinkingflow as doctor_script
 import report_deepthinkingflow_artifacts as artifact_report
+import compare_eval_reports as compare_eval
+import build_partial_lora_config as partial_lora_config
 import run_tiny_smoke_release_lane as tiny_release_lane
 import render_transformers_deepthinkingflow_prompt as render_prompt
 import run_transformers_deepthinkingflow as run_script
@@ -116,11 +121,23 @@ class CliSmokeTest(unittest.TestCase):
     def test_prepare_training_assets_command_is_registered(self) -> None:
         self.assertIn("prepare-training-assets", cli.COMMANDS)
 
+    def test_build_partial_lora_config_command_is_registered(self) -> None:
+        self.assertIn("build-partial-lora-config", cli.COMMANDS)
+
     def test_generate_skill_compliance_command_is_registered(self) -> None:
         self.assertIn("generate-skill-compliance", cli.COMMANDS)
 
     def test_report_artifacts_command_is_registered(self) -> None:
         self.assertIn("report-artifacts", cli.COMMANDS)
+
+    def test_benchmark_runtime_command_is_registered(self) -> None:
+        self.assertIn("benchmark-runtime", cli.COMMANDS)
+
+    def test_aggregate_runs_command_is_registered(self) -> None:
+        self.assertIn("aggregate-runs", cli.COMMANDS)
+
+    def test_check_promotion_readiness_command_is_registered(self) -> None:
+        self.assertIn("check-promotion-readiness", cli.COMMANDS)
 
     def test_bootstrap_training_env_command_is_registered(self) -> None:
         self.assertIn("bootstrap-training-env", cli.COMMANDS)
@@ -398,7 +415,8 @@ class BundleValidationSmokeTest(unittest.TestCase):
         summary = bundle_validator.validate_bundle(Path(BUNDLE_DIR))
 
         self.assertGreaterEqual(summary["skill_compliance_examples"], 48)
-        self.assertEqual(summary["skill_compliance_eval_cases"], 24)
+        self.assertEqual(summary["skill_compliance_eval_cases"], 30)
+        self.assertEqual(summary["promotion_policy_path"], "promotion_policy.json")
         self.assertEqual(
             summary["prepared_train_dataset"],
             "training/harmony_sft_plus_skill_compliance_vi.train.jsonl",
@@ -430,6 +448,20 @@ class EvaluatorSmokeTest(unittest.TestCase):
         self.assertTrue(evaluator.score_trait("explicit_training_boundary", final_text, analysis_text))
         self.assertTrue(evaluator.score_trait("explicit_no_weight_claim", final_text, analysis_text))
         self.assertTrue(evaluator.score_trait("analysis_sanitized", final_text, analysis_text))
+
+    def test_scores_new_semantic_boundary_traits(self) -> None:
+        final_text = (
+            "Chưa đủ để kết luận semantic skill-compliance đã ổn. "
+            "Bạn vẫn cần human review hoặc judge mạnh hơn, cộng với compare benchmark rõ ràng. "
+            "Nếu chưa qua golden release gate thì không nên promote adapter. "
+            "Ngoài ra còn phải giữ lineage run để audit và so sánh."
+        )
+        analysis_text = "Tom tat ngan, sach, khong marker."
+
+        self.assertTrue(evaluator.score_trait("semantic_evidence_boundary", final_text, analysis_text))
+        self.assertTrue(evaluator.score_trait("promotion_gate_awareness", final_text, analysis_text))
+        self.assertTrue(evaluator.score_trait("benchmark_awareness", final_text, analysis_text))
+        self.assertTrue(evaluator.score_trait("lineage_awareness", final_text, analysis_text))
 
     def test_analysis_sanitized_trait_rejects_internal_markers(self) -> None:
         self.assertFalse(
@@ -594,6 +626,51 @@ class DoctorSmokeTest(unittest.TestCase):
         self.assertTrue(payload["doctor"]["issues"])
 
 
+class PartialLoraConfigSmokeTest(unittest.TestCase):
+    def test_build_partial_lora_config_derives_safe_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_path = Path(tmpdir) / "base.json"
+            out_path = Path(tmpdir) / "partial.json"
+            base_path.write_text(
+                json.dumps(
+                    {
+                        "max_train_samples": 100,
+                        "max_eval_samples": 50,
+                        "num_train_epochs": 3,
+                        "learning_rate": 1e-4,
+                        "gradient_accumulation_steps": 8,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            argv = [
+                "build_partial_lora_config.py",
+                "--base-config",
+                str(base_path),
+                "--output",
+                str(out_path),
+                "--output-dir",
+                str(Path(tmpdir) / "adapter-out"),
+                "--max-train-samples",
+                "6",
+                "--max-eval-samples",
+                "3",
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                with contextlib.redirect_stdout(stdout):
+                    result = partial_lora_config.main()
+
+            payload = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(result, 0)
+            self.assertEqual(payload["max_train_samples"], 6)
+            self.assertEqual(payload["max_eval_samples"], 3)
+            self.assertEqual(payload["output_dir"], str((Path(tmpdir) / "adapter-out").resolve()))
+            self.assertEqual(payload["partial_training_profile"]["mode"], "safe-partial-lora")
+            self.assertEqual(payload["partial_training_profile"]["output_dir"], str((Path(tmpdir) / "adapter-out").resolve()))
+
+
 class TinySmokeReleaseLaneTest(unittest.TestCase):
     def test_tiny_smoke_release_lane_orchestrates_reports(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -708,6 +785,25 @@ class ProjectVerifySmokeTest(unittest.TestCase):
         self.assertFalse(payload["claim_gate"]["passed"])
         self.assertIn("below required", payload["claim_gate"]["reasons"][0])
 
+    def test_verify_project_can_fail_on_quality_regression(self) -> None:
+        gate = verify_project.evaluate_claim_gate(
+            required_claim_level="learned-only-after-training",
+            artifact_payload={
+                "claim_level": "learned-only-after-training",
+                "lineage_status": {
+                    "lineage_complete_for_training_claim": True,
+                    "lineage_complete_for_learned_claim": True,
+                },
+                "quality_signals": {
+                    "candidate_quality_is_non_regressing": False,
+                },
+            },
+            require_non_regressing_quality=True,
+        )
+
+        self.assertFalse(gate["passed"])
+        self.assertTrue(any("quality regressed" in reason for reason in gate["reasons"]))
+
 
 class ReleaseManifestSmokeTest(unittest.TestCase):
     def test_build_release_manifest_from_verify_report(self) -> None:
@@ -756,6 +852,8 @@ class ReleaseManifestSmokeTest(unittest.TestCase):
             self.assertTrue(payload["release_state"]["claim_gate_passed"])
             self.assertTrue(payload["release_state"]["release_candidate"])
             self.assertFalse(payload["release_state"]["local_host_ready"])
+            self.assertTrue(payload["release_state"]["golden_release_gate_passed"])
+            self.assertTrue(payload["golden_release_gate"]["passed"])
             self.assertEqual(payload["verify_report_ref"]["path"], str(verify_path))
             self.assertTrue(payload["verify_report_ref"]["sha256"])
             self.assertTrue(output_path.is_file())
@@ -796,6 +894,33 @@ class ReleaseManifestSmokeTest(unittest.TestCase):
         self.assertIn("claim gate", str(ctx.exception))
 
 
+class DoctorSmokeTest(unittest.TestCase):
+    def test_doctor_surfaces_quality_regression_issue(self) -> None:
+        payload = doctor_script.summarize_doctor(
+            verify_payload={
+                "verified": {"bundle_valid": True, "claim_gate_passed": True},
+                "project_preflight": {"ready": {"inference_soft_gate_clear": True, "training_soft_gate_clear": True, "training_locally_feasible": True}},
+                "claim_gate": {"passed": True},
+            },
+            artifact_payload={
+                "claim_level": "learned-only-after-training",
+                "lineage_status": {
+                    "lineage_complete_for_training_claim": True,
+                    "lineage_complete_for_learned_claim": True,
+                },
+                "quality_signals": {
+                    "candidate_quality_is_non_regressing": False,
+                    "semantic_skill_compliance_still_unproven": True,
+                },
+            },
+        )
+
+        self.assertFalse(payload["project_ready_for_runtime_only_release"] is False)
+        self.assertFalse(payload["candidate_quality_is_non_regressing"])
+        self.assertTrue(payload["semantic_skill_compliance_still_unproven"])
+        self.assertTrue(any("quality regression" in issue.lower() for issue in payload["issues"]))
+
+
 class StagedTrainingConfigResolutionTest(unittest.TestCase):
     def test_build_effective_config_resolves_latest_without_mutating_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -822,6 +947,13 @@ class StagedTrainingConfigResolutionTest(unittest.TestCase):
             self.assertNotEqual(temp_path, stage_path)
             self.assertEqual(json.loads(stage_path.read_text(encoding="utf-8"))["resume_from_checkpoint"], "latest")
             self.assertEqual(json.loads(temp_path.read_text(encoding="utf-8"))["resume_from_checkpoint"], "checkpoint-1")
+
+    def test_partial_flag_is_exposed_by_parser(self) -> None:
+        argv = ["train_deepthinkingflow_staged.py", "--partial", "--dry-run"]
+        with mock.patch.object(sys, "argv", argv):
+            parsed = staged_train.parse_args()
+        self.assertTrue(parsed.partial)
+        self.assertTrue(parsed.dry_run)
 
 
 class PreparedChatExportSmokeTest(unittest.TestCase):
@@ -967,6 +1099,8 @@ class TrainingAssetBuilderTest(unittest.TestCase):
                 str(bundle),
                 "--skill-eval-per-category",
                 "1",
+                "--skill-train-repeats",
+                "3",
             ]
             stdout = io.StringIO()
             with mock.patch.object(sys, "argv", argv):
@@ -979,17 +1113,23 @@ class TrainingAssetBuilderTest(unittest.TestCase):
             self.assertEqual(summary["skill_compliance"]["eval"], 4)
             self.assertEqual(summary["combined"]["train"], 11)
             self.assertEqual(summary["combined"]["eval"], 5)
+            self.assertEqual(summary["balanced"]["train"], 27)
+            self.assertEqual(summary["balanced"]["eval"], 5)
 
             skill_train_rows = bundle_validator.read_jsonl(training / "harmony_sft_skill_compliance_vi.train.jsonl")
             skill_eval_rows = bundle_validator.read_jsonl(training / "harmony_sft_skill_compliance_vi.eval.jsonl")
             combined_train_rows = bundle_validator.read_jsonl(training / "harmony_sft_plus_skill_compliance_vi.train.jsonl")
             combined_eval_rows = bundle_validator.read_jsonl(training / "harmony_sft_plus_skill_compliance_vi.eval.jsonl")
+            balanced_train_rows = bundle_validator.read_jsonl(training / "harmony_sft_plus_skill_compliance_balanced_vi.train.jsonl")
+            balanced_eval_rows = bundle_validator.read_jsonl(training / "harmony_sft_plus_skill_compliance_balanced_vi.eval.jsonl")
 
             skill_train_hashes = {bundle_validator.canonical_messages_hash(row["messages"]) for row in skill_train_rows}
             skill_eval_hashes = {bundle_validator.canonical_messages_hash(row["messages"]) for row in skill_eval_rows}
             self.assertTrue(skill_train_hashes.isdisjoint(skill_eval_hashes))
             self.assertEqual(len(combined_train_rows), 11)
             self.assertEqual(len(combined_eval_rows), 5)
+            self.assertEqual(len(balanced_train_rows), 27)
+            self.assertEqual(len(balanced_eval_rows), 5)
 
 
 class SafetensorsInspectorTest(unittest.TestCase):
@@ -1095,6 +1235,25 @@ class ArtifactReportSmokeTest(unittest.TestCase):
 
         self.assertEqual(claim_level, "learned-only-after-training")
 
+    def test_artifact_report_builds_quality_signals(self) -> None:
+        quality = artifact_report.build_quality_signals(
+            eval_output_payload={"trait_pass_rate": 0.4, "rubric_pass_rate": 0.8},
+            compare_report_payload={
+                "candidate_is_not_worse_on_trait_pass_rate": False,
+                "candidate_is_not_worse_on_rubric_pass_rate": True,
+                "candidate_is_not_worse_on_every_shared_case_trait_count": False,
+                "candidate_is_not_worse_on_every_shared_case_rubric_count": True,
+            },
+        )
+
+        self.assertEqual(quality["trait_pass_rate"], 0.4)
+        self.assertEqual(quality["rubric_pass_rate"], 0.8)
+        self.assertFalse(quality["candidate_quality_is_non_regressing"])
+        self.assertTrue(quality["learned_claim_has_quality_regression_risk"])
+        self.assertTrue(quality["semantic_skill_compliance_still_unproven"])
+        self.assertFalse(quality["candidate_is_not_worse_on_every_shared_case_trait_count"])
+        self.assertTrue(quality["candidate_is_not_worse_on_every_shared_case_rubric_count"])
+
     def test_artifact_report_builds_lineage_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1175,6 +1334,59 @@ class TrainingPreflightTest(unittest.TestCase):
         self.assertTrue(any("20B" in reason or "DeepThinkingFlow 20B" in reason for reason in result["reasons"]))
 
 
+class TrainingStabilityGuardTest(unittest.TestCase):
+    def test_normalize_config_adds_stability_defaults(self) -> None:
+        config = train_script.normalize_config({})
+
+        self.assertEqual(config["grad_norm_warn_threshold"], 2.0)
+        self.assertEqual(config["grad_norm_fail_threshold"], 5.0)
+        self.assertTrue(config["fail_on_non_finite_loss"])
+        self.assertTrue(config["fail_on_non_finite_grad_norm"])
+
+    def test_validate_config_rejects_bad_stability_threshold_order(self) -> None:
+        config = train_script.normalize_config(
+            {
+                "model_name_or_path": str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow-tiny-smoke").resolve()),
+                "dataset_path": str((ROOT_DIR / "behavior" / "DeepThinkingFlow" / "training" / "harmony_sft_plus_skill_compliance_vi.train.jsonl").resolve()),
+                "output_dir": str((ROOT_DIR / "out" / "stability-check").resolve()),
+                "bf16": False,
+                "num_train_epochs": 1,
+                "per_device_train_batch_size": 1,
+                "gradient_accumulation_steps": 1,
+                "learning_rate": 1e-4,
+                "max_seq_length": 256,
+                "lora_r": 4,
+                "lora_alpha": 8,
+                "lora_dropout": 0.0,
+                "target_modules": ["q_proj"],
+                "reasoning_effort": "high",
+                "grad_norm_warn_threshold": 3.0,
+                "grad_norm_fail_threshold": 2.0,
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "grad_norm_fail_threshold"):
+            train_script.validate_config(config)
+
+    def test_stability_callback_warns_and_fails_on_threshold(self) -> None:
+        summary = {"stability_events": []}
+        callback = train_script.TrainingStabilityCallback(
+            warn_threshold=1.5,
+            fail_threshold=4.0,
+            fail_on_non_finite_loss=True,
+            fail_on_non_finite_grad_norm=True,
+            summary=summary,
+        )
+        state = types.SimpleNamespace(global_step=7)
+        control = object()
+
+        callback.on_log(None, state, control, logs={"grad_norm": 1.75, "loss": 1.0})
+        self.assertEqual(summary["stability_events"][0]["level"], "warn")
+
+        with self.assertRaisesRegex(RuntimeError, "grad_norm"):
+            callback.on_log(None, state, control, logs={"grad_norm": 4.2, "loss": 1.0})
+
+
 class CompileBundleTest(unittest.TestCase):
     def test_compiler_creates_compact_prompt_pack(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1196,6 +1408,255 @@ class CompileBundleTest(unittest.TestCase):
             self.assertIn("runtime_pack", pack)
             self.assertIn("runtime_pack_text", pack)
             self.assertIn("STACK=", pack["runtime_pack_text"])
+
+
+class RuntimeBenchmarkSmokeTest(unittest.TestCase):
+    def test_runtime_benchmark_emits_summary(self) -> None:
+        fake_transformers = types.ModuleType("transformers")
+
+        class FakeTokenizer:
+            def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+                return f"TEMPLATE::{messages[-1]['content']}::{add_generation_prompt}"
+
+            def __call__(self, text, add_special_tokens):
+                return {"input_ids": list(range(max(1, len(text) // 5)))}
+
+        class FakeAutoTokenizer:
+            @staticmethod
+            def from_pretrained(_model_dir):
+                return FakeTokenizer()
+
+        fake_transformers.AutoTokenizer = FakeAutoTokenizer
+        stdout = io.StringIO()
+        argv = [
+            "benchmark_deepthinkingflow_runtime.py",
+            "--model-dir",
+            MODEL_DIR,
+            "--iterations",
+            "2",
+            "--warmup",
+            "0",
+        ]
+
+        with mock.patch.dict(sys.modules, {"transformers": fake_transformers}):
+            with mock.patch.object(sys, "argv", argv):
+                with contextlib.redirect_stdout(stdout):
+                    result = benchmark_runtime.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["schema_version"], "dtf-runtime-benchmark/v1")
+        self.assertEqual(payload["iterations"], 2)
+        self.assertIn("tokenization_tokens_per_second", payload)
+        self.assertIn("render_template_latency", payload)
+
+
+class AggregateRunsSmokeTest(unittest.TestCase):
+    def test_aggregate_runs_collects_supported_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            out_dir = root / "out"
+            out_dir.mkdir()
+            (out_dir / "artifact.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "dtf-artifact-report/v2",
+                        "generated_at_utc": "2026-01-01T00:00:00+00:00",
+                        "claim_level": "training-ready",
+                        "lineage_status": {
+                            "lineage_complete_for_training_claim": True,
+                            "lineage_complete_for_learned_claim": False,
+                        },
+                        "quality_signals": {
+                            "candidate_quality_is_non_regressing": None,
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (out_dir / "verify.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "dtf-verify-report/v2",
+                        "generated_at_utc": "2026-01-01T00:01:00+00:00",
+                        "claim_gate": {"passed": True},
+                        "verified": {"tests_passed": True},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(aggregate_runs, "ROOT_DIR", root):
+                stdout = io.StringIO()
+                argv = [
+                    "aggregate_deepthinkingflow_runs.py",
+                    "--search-root",
+                    "out",
+                ]
+                with mock.patch.object(sys, "argv", argv):
+                    with contextlib.redirect_stdout(stdout):
+                        result = aggregate_runs.main()
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(result, 0)
+            self.assertEqual(payload["schema_version"], "dtf-lineage-summary/v1")
+            self.assertEqual(payload["summary"]["report_count"], 2)
+            self.assertEqual(payload["summary"]["artifact_report_count"], 1)
+            self.assertEqual(payload["summary"]["verify_report_count"], 1)
+
+
+class PromotionReadinessSmokeTest(unittest.TestCase):
+    def test_runtime_only_readiness_passes_with_verify_and_release(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bundle = root / "behavior" / "DeepThinkingFlow"
+            bundle.mkdir(parents=True)
+            (bundle / "profile.json").write_text(
+                json.dumps(
+                    {
+                        "target_model": "DeepThinkingFlow",
+                        "files": {"promotion_policy": "promotion_policy.json"},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (bundle / "promotion_policy.json").write_text(
+                json.dumps(
+                    {
+                        "policy_name": "test-policy",
+                        "claim_levels": {
+                            "runtime-only": {"requires": ["valid_behavior_bundle", "verified_runtime_boundary"]},
+                            "training-ready": {"requires": ["valid_behavior_bundle"]},
+                            "learned-only-after-training": {"requires": ["valid_behavior_bundle"]},
+                            "weight-level-verified": {"requires": ["valid_behavior_bundle"]},
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            verify_path = root / "verify.json"
+            release_path = root / "release.json"
+            verify_path.write_text(
+                json.dumps(
+                    {
+                        "verified": {"bundle_valid": True},
+                        "claim_gate": {"passed": True},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            release_path.write_text(
+                json.dumps({"release_state": {"golden_release_gate_passed": True}}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            argv = [
+                "check_promotion_readiness.py",
+                "--bundle",
+                str(bundle),
+                "--claim-level",
+                "runtime-only",
+                "--verify-report",
+                str(verify_path),
+                "--release-manifest",
+                str(release_path),
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                with contextlib.redirect_stdout(stdout):
+                    result = promotion_readiness.main()
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(result, 0)
+            self.assertTrue(payload["readiness"]["ready"])
+            self.assertEqual(payload["policy_name"], "test-policy")
+
+    def test_learned_readiness_fails_without_eval_evidence(self) -> None:
+        policy = {
+            "claim_levels": {
+                "runtime-only": {"requires": ["valid_behavior_bundle"]},
+                "training-ready": {"requires": ["valid_behavior_bundle"]},
+                "learned-only-after-training": {"requires": ["eval_output", "compare_report", "candidate_quality_is_non_regressing"]},
+                "weight-level-verified": {"requires": ["golden_release_gate_passed"]},
+            }
+        }
+        readiness = promotion_readiness.evaluate_readiness(
+            "learned-only-after-training",
+            policy,
+            {
+                "eval_output": False,
+                "compare_report": False,
+                "candidate_quality_is_non_regressing": False,
+                "lineage_complete_for_learned_claim": False,
+            },
+        )
+
+        self.assertFalse(readiness["ready"])
+        self.assertIn("missing_eval_output_for_learned_claim", readiness["hard_failures"])
+        self.assertIn("missing_compare_report_for_learned_claim", readiness["hard_failures"])
+
+
+class CompareEvalReportsTest(unittest.TestCase):
+    def test_compare_eval_reports_tracks_case_non_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            baseline_path = Path(tmpdir) / "baseline.json"
+            candidate_path = Path(tmpdir) / "candidate.json"
+            output_path = Path(tmpdir) / "compare.json"
+            baseline_path.write_text(
+                json.dumps(
+                    {
+                        "cases": 2,
+                        "trait_pass_rate": 0.5,
+                        "rubric_pass_rate": 0.5,
+                        "results": [
+                            {"id": "a", "passed_traits": 1, "passed_rubrics": 1},
+                            {"id": "b", "passed_traits": 2, "passed_rubrics": 2},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            candidate_path.write_text(
+                json.dumps(
+                    {
+                        "cases": 2,
+                        "trait_pass_rate": 0.4,
+                        "rubric_pass_rate": 0.5,
+                        "results": [
+                            {"id": "a", "passed_traits": 1, "passed_rubrics": 1},
+                            {"id": "b", "passed_traits": 1, "passed_rubrics": 2},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            argv = [
+                "compare_eval_reports.py",
+                "--baseline",
+                str(baseline_path),
+                "--candidate",
+                str(candidate_path),
+                "--output",
+                str(output_path),
+            ]
+            stdout = io.StringIO()
+            with mock.patch.object(sys, "argv", argv):
+                with contextlib.redirect_stdout(stdout):
+                    result = compare_eval.main()
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(result, 0)
+            self.assertEqual(payload["shared_case_count"], 2)
+            self.assertEqual(payload["case_trait_non_regression_count"], 1)
+            self.assertEqual(payload["case_rubric_non_regression_count"], 2)
+            self.assertFalse(payload["candidate_is_not_worse_on_every_shared_case_trait_count"])
+            self.assertTrue(payload["candidate_is_not_worse_on_every_shared_case_rubric_count"])
 
 
 if __name__ == "__main__":

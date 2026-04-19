@@ -21,7 +21,7 @@ from datasets import Dataset, load_dataset
 from transformers import AutoTokenizer
 
 
-DEFAULT_MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
+DEFAULT_MODEL_NAME = "runtime/transformers/DeepThinkingFlow"
 OPEN_THOUGHTS_DATASET = "open-thoughts/OpenThoughts3-1.2M"
 OPEN_CODE_DATASET = "nvidia/OpenCodeInstruct"
 OPEN_THOUGHTS_ALLOWED_DOMAINS = {"math", "science"}
@@ -35,7 +35,10 @@ def parse_args() -> argparse.Namespace:
         "--model_name",
         type=str,
         default=DEFAULT_MODEL_NAME,
-        help=f"Tokenizer model name. Falls back to {DEFAULT_MODEL_NAME} when MODEL_NAME is unset.",
+        help=(
+            "Tokenizer model name or local tokenizer path. "
+            f"Defaults to the project runtime target at {DEFAULT_MODEL_NAME}."
+        ),
     )
     parser.add_argument(
         "--output_dir",
@@ -72,7 +75,10 @@ def parse_args() -> argparse.Namespace:
 
 def resolve_model_name(args: argparse.Namespace) -> str:
     # The environment variable wins when present, otherwise use the CLI value.
-    return os.environ.get("MODEL_NAME", args.model_name)
+    model_name = os.environ.get("MODEL_NAME", args.model_name).strip()
+    if not model_name:
+        raise SystemExit("A tokenizer target is required. Set MODEL_NAME or pass --model_name.")
+    return model_name
 
 
 def normalize_role(raw_role: str) -> str | None:
@@ -226,6 +232,13 @@ def main() -> int:
     args = parse_args()
     model_name = resolve_model_name(args)
     os.makedirs(args.output_dir, exist_ok=True)
+
+    if model_name == DEFAULT_MODEL_NAME:
+        warnings.warn(
+            "Using the local DeepThinkingFlow tokenizer target by default. "
+            "Override --model_name or MODEL_NAME if you intentionally want a different chat template.",
+            stacklevel=2,
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 

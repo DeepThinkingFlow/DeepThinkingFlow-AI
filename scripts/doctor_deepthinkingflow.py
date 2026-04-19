@@ -5,13 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from deepthinkingflow_exit_codes import OK, PRECONDITION_FAILED
+from deepthinkingflow_json_io import load_json_file, now_utc_iso, run_json_command
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
@@ -48,23 +47,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def run_json(command: list[str], label: str) -> dict[str, Any]:
-    completed = subprocess.run(
-        command,
-        cwd=str(ROOT_DIR),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        raise SystemExit(f"{label} failed with code {completed.returncode}: {completed.stderr.strip() or completed.stdout.strip()}")
-    return json.loads(completed.stdout)
-
-
 def summarize_doctor(
     *,
     verify_payload: dict[str, Any],
@@ -87,9 +69,12 @@ def summarize_doctor(
         issues.append("Configured local 20B training is not feasible on the current host.")
     if artifact_payload is not None and not lineage.get("lineage_complete_for_training_claim", False):
         issues.append("Artifact lineage is incomplete for training-side claims.")
+    quality = {} if artifact_payload is None else artifact_payload.get("quality_signals", {})
+    if artifact_payload is not None and quality.get("candidate_quality_is_non_regressing") is False:
+        issues.append("Artifact compare report shows quality regression risk.")
 
     return {
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "generated_at_utc": now_utc_iso(),
         "project_ready_for_runtime_only_release": bool(
             verify_payload.get("verified", {}).get("bundle_valid", False)
             and verify_payload.get("verified", {}).get("claim_gate_passed", False)
@@ -98,6 +83,8 @@ def summarize_doctor(
         "artifact_lineage_complete_for_training_claim": bool(lineage.get("lineage_complete_for_training_claim", False)),
         "artifact_lineage_complete_for_learned_claim": bool(lineage.get("lineage_complete_for_learned_claim", False)),
         "claim_level": "runtime-only" if artifact_payload is None else artifact_payload.get("claim_level", "runtime-only"),
+        "candidate_quality_is_non_regressing": quality.get("candidate_quality_is_non_regressing"),
+        "semantic_skill_compliance_still_unproven": quality.get("semantic_skill_compliance_still_unproven"),
         "claim_gate": claim_gate,
         "issues": issues,
     }
@@ -106,9 +93,9 @@ def summarize_doctor(
 def main() -> int:
     args = parse_args()
     verify_payload = (
-        load_json(Path(args.verify_report).resolve())
+        load_json_file(Path(args.verify_report).resolve(), "verify report")
         if args.verify_report
-        else run_json(
+        else run_json_command(
             [
                 sys.executable,
                 str((ROOT_DIR / "scripts" / "verify_deepthinkingflow_project.py").resolve()),
@@ -122,10 +109,11 @@ def main() -> int:
                 "--require-claim-level",
                 "runtime-only",
             ],
-            "verify health check",
+            cwd=ROOT_DIR,
+            label="verify health check",
         )
     )
-    artifact_payload = load_json(Path(args.artifact_report).resolve()) if args.artifact_report else None
+    artifact_payload = load_json_file(Path(args.artifact_report).resolve(), "artifact report") if args.artifact_report else None
     summary = {
         "schema_version": "dtf-doctor-report/v1",
         "root_dir": str(ROOT_DIR),

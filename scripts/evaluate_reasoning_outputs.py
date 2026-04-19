@@ -36,6 +36,11 @@ def has_keywords(text: str, keywords: list[str]) -> bool:
     return any(keyword in normalized for keyword in keywords)
 
 
+def semantic_contains_any(text: str, groups: list[list[str]]) -> bool:
+    normalized = text.lower()
+    return any(any(keyword in normalized for keyword in group) for group in groups)
+
+
 def count_numbered_steps(text: str) -> int:
     return len(re.findall(r"(?:^|\s)(\d+)\.", text))
 
@@ -106,6 +111,40 @@ def score_trait(trait: str, final_text: str, analysis_text: str) -> bool:
         return has_keywords(combined, ["không chắc", "chưa đủ bằng chứng", "không thể kết luận", "unknown", "not verified"])
     if trait == "skill_stack_visible":
         return has_keywords(combined, ["runtime-only", "training-ready", "learned-only-after-training", "weights"])
+    if trait == "semantic_evidence_boundary":
+        return semantic_contains_any(
+            combined,
+            [
+                ["semantic", "ngữ nghĩa"],
+                ["human review", "judge", "review tay", "người chấm"],
+                ["chưa đủ", "không đủ", "not enough"],
+            ],
+        )
+    if trait == "promotion_gate_awareness":
+        return semantic_contains_any(
+            combined,
+            [
+                ["release gate", "golden release gate", "promotion gate"],
+                ["promote", "publish", "release"],
+                ["không nên", "không được", "must", "cần"],
+            ],
+        )
+    if trait == "benchmark_awareness":
+        return semantic_contains_any(
+            combined,
+            [
+                ["latency", "throughput", "memory", "benchmark"],
+                ["không nên bỏ", "cần đo", "phải đo", "should measure"],
+            ],
+        )
+    if trait == "lineage_awareness":
+        return semantic_contains_any(
+            combined,
+            [
+                ["lineage", "history", "lịch sử run", "audit"],
+                ["không nên bỏ", "cần giữ", "so sánh run", "track"],
+            ],
+        )
     return False
 
 

@@ -33,6 +33,12 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="How many skill-compliance examples per category should be reserved for eval.",
     )
+    parser.add_argument(
+        "--skill-train-repeats",
+        type=int,
+        default=3,
+        help="How many times to repeat each skill-compliance train example in the balanced train asset.",
+    )
     return parser.parse_args()
 
 
@@ -140,10 +146,24 @@ def ensure_disjoint(left: list[dict[str, Any]], right: list[dict[str, Any]], *, 
         raise SystemExit(f"{label} datasets overlap on {len(overlap)} examples.")
 
 
+def build_balanced_train_rows(
+    base_train: list[dict[str, Any]],
+    skill_train: list[dict[str, Any]],
+    *,
+    skill_train_repeats: int,
+) -> list[dict[str, Any]]:
+    if skill_train_repeats < 1:
+        raise SystemExit("--skill-train-repeats must be >= 1")
+    repeated_skill_rows = list(skill_train) * skill_train_repeats
+    return [*base_train, *repeated_skill_rows]
+
+
 def main() -> int:
     args = parse_args()
     if args.skill_eval_per_category < 1:
         raise SystemExit("--skill-eval-per-category must be >= 1")
+    if args.skill_train_repeats < 1:
+        raise SystemExit("--skill-train-repeats must be >= 1")
 
     bundle_dir = Path(args.bundle).resolve()
     training_dir = bundle_dir / "training"
@@ -172,7 +192,15 @@ def main() -> int:
     combined_all = [*base_all, *skill_all]
     combined_train = [*base_train, *skill_train]
     combined_eval = [*base_eval, *skill_eval]
+    balanced_train = build_balanced_train_rows(
+        base_train,
+        skill_train,
+        skill_train_repeats=args.skill_train_repeats,
+    )
+    balanced_eval = list(combined_eval)
     ensure_disjoint(combined_train, combined_eval, label="combined train/eval")
+    ensure_disjoint(base_train, balanced_eval, label="base/balanced eval")
+    ensure_disjoint(skill_train, balanced_eval, label="skill/balanced eval")
 
     outputs = {
         training_dir / "harmony_sft_skill_compliance_vi.train.jsonl": skill_train,
@@ -180,6 +208,8 @@ def main() -> int:
         training_dir / "harmony_sft_plus_skill_compliance_vi.jsonl": combined_all,
         training_dir / "harmony_sft_plus_skill_compliance_vi.train.jsonl": combined_train,
         training_dir / "harmony_sft_plus_skill_compliance_vi.eval.jsonl": combined_eval,
+        training_dir / "harmony_sft_plus_skill_compliance_balanced_vi.train.jsonl": balanced_train,
+        training_dir / "harmony_sft_plus_skill_compliance_balanced_vi.eval.jsonl": balanced_eval,
     }
     for path, rows in outputs.items():
         write_jsonl(path, rows)
@@ -187,6 +217,7 @@ def main() -> int:
     summary = {
         "bundle": str(bundle_dir),
         "skill_eval_per_category": args.skill_eval_per_category,
+        "skill_train_repeats": args.skill_train_repeats,
         "base": {
             "all": len(base_all),
             "train": len(base_train),
@@ -202,6 +233,10 @@ def main() -> int:
             "all": len(combined_all),
             "train": len(combined_train),
             "eval": len(combined_eval),
+        },
+        "balanced": {
+            "train": len(balanced_train),
+            "eval": len(balanced_eval),
         },
         "outputs": {str(path.relative_to(bundle_dir)): len(rows) for path, rows in outputs.items()},
     }

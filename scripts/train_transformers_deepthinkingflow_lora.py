@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import math
 import json
+import numbers
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -157,6 +158,10 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     cfg.setdefault("require_all_target_modules_hit", True)
     cfg.setdefault("min_target_module_matches", len(cfg.get("target_modules", [])))
     cfg.setdefault("min_trainable_params", 1)
+    cfg.setdefault("grad_norm_warn_threshold", 2.0)
+    cfg.setdefault("grad_norm_fail_threshold", 5.0)
+    cfg.setdefault("fail_on_non_finite_loss", True)
+    cfg.setdefault("fail_on_non_finite_grad_norm", True)
     return cfg
 
 
@@ -203,6 +208,12 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("min_target_module_matches must be >= 1.")
     if int(config["min_trainable_params"]) < 1:
         raise ValueError("min_trainable_params must be >= 1.")
+    if float(config["grad_norm_warn_threshold"]) <= 0:
+        raise ValueError("grad_norm_warn_threshold must be > 0.")
+    if float(config["grad_norm_fail_threshold"]) <= 0:
+        raise ValueError("grad_norm_fail_threshold must be > 0.")
+    if float(config["grad_norm_fail_threshold"]) < float(config["grad_norm_warn_threshold"]):
+        raise ValueError("grad_norm_fail_threshold must be >= grad_norm_warn_threshold.")
     if float(config["num_train_epochs"]) <= 0:
         raise ValueError("num_train_epochs must be > 0.")
     if int(config["per_device_train_batch_size"]) < 1:
@@ -452,6 +463,62 @@ def estimate_warmup_steps(
     return max(0, int(round(total_steps * warmup_ratio)))
 
 
+class TrainingStabilityCallback:
+    def __init__(
+        self,
+        *,
+        warn_threshold: float,
+        fail_threshold: float,
+        fail_on_non_finite_loss: bool,
+        fail_on_non_finite_grad_norm: bool,
+        summary: dict[str, Any],
+    ) -> None:
+        self.warn_threshold = float(warn_threshold)
+        self.fail_threshold = float(fail_threshold)
+        self.fail_on_non_finite_loss = bool(fail_on_non_finite_loss)
+        self.fail_on_non_finite_grad_norm = bool(fail_on_non_finite_grad_norm)
+        self.summary = summary
+        self.events: list[dict[str, Any]] = []
+
+    def _record(self, level: str, step: int | None, metric: str, value: Any, reason: str) -> None:
+        event = {
+            "level": level,
+            "step": step,
+            "metric": metric,
+            "value": value,
+            "reason": reason,
+        }
+        self.events.append(event)
+        self.summary["stability_events"] = self.events
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        logs = logs or {}
+        step = getattr(state, "global_step", None)
+        loss = logs.get("loss")
+        grad_norm = logs.get("grad_norm")
+
+        if isinstance(loss, numbers.Real) and not math.isfinite(float(loss)):
+            self._record("error", step, "loss", float(loss), "Non-finite loss detected.")
+            if self.fail_on_non_finite_loss:
+                raise RuntimeError("Training aborted: non-finite loss detected.")
+
+        if isinstance(grad_norm, numbers.Real):
+            grad_norm_value = float(grad_norm)
+            if not math.isfinite(grad_norm_value):
+                self._record("error", step, "grad_norm", grad_norm_value, "Non-finite grad_norm detected.")
+                if self.fail_on_non_finite_grad_norm:
+                    raise RuntimeError("Training aborted: non-finite grad_norm detected.")
+            elif grad_norm_value >= self.fail_threshold:
+                self._record("error", step, "grad_norm", grad_norm_value, "grad_norm exceeded fail threshold.")
+                raise RuntimeError(
+                    f"Training aborted: grad_norm {grad_norm_value:.4f} exceeded fail threshold {self.fail_threshold:.4f}."
+                )
+            elif grad_norm_value >= self.warn_threshold:
+                self._record("warn", step, "grad_norm", grad_norm_value, "grad_norm exceeded warning threshold.")
+
+        return control
+
+
 def main() -> int:
     injected_site_packages = inject_local_site_packages()
     args = parse_args()
@@ -557,6 +624,13 @@ def main() -> int:
         explicit_warmup_steps=int(config.get("warmup_steps", 0)),
         warmup_ratio=float(config["warmup_ratio"]),
     )
+    summary["stability_guard"] = {
+        "grad_norm_warn_threshold": float(config["grad_norm_warn_threshold"]),
+        "grad_norm_fail_threshold": float(config["grad_norm_fail_threshold"]),
+        "fail_on_non_finite_loss": bool(config["fail_on_non_finite_loss"]),
+        "fail_on_non_finite_grad_norm": bool(config["fail_on_non_finite_grad_norm"]),
+    }
+    summary["stability_events"] = []
 
     output_dir = Path(config["output_dir"]).resolve()
     write_run_manifest(output_dir, summary)
@@ -701,6 +775,15 @@ def main() -> int:
     callbacks = []
     if eval_dataset is not None:
         callbacks.append(EarlyStoppingCallback(early_stopping_patience=int(config["early_stopping_patience"])))
+    callbacks.append(
+        TrainingStabilityCallback(
+            warn_threshold=float(config["grad_norm_warn_threshold"]),
+            fail_threshold=float(config["grad_norm_fail_threshold"]),
+            fail_on_non_finite_loss=bool(config["fail_on_non_finite_loss"]),
+            fail_on_non_finite_grad_norm=bool(config["fail_on_non_finite_grad_norm"]),
+            summary=summary,
+        )
+    )
 
     trainer = Trainer(
         model=model,

@@ -96,9 +96,13 @@ def validate_bundle(bundle_dir: Path) -> dict:
 
     sft_path = bundle_dir / profile["files"]["sft_dataset"]
     evals_path = bundle_dir / profile["files"]["eval_cases"]
+    promotion_policy_path = None
     skill_eval_cases_path = None
     ensure(sft_path.is_file(), f"Missing {sft_path}")
     ensure(evals_path.is_file(), f"Missing {evals_path}")
+    if profile["files"].get("promotion_policy"):
+        promotion_policy_path = bundle_dir / profile["files"]["promotion_policy"]
+        ensure(promotion_policy_path.is_file(), f"Missing {promotion_policy_path}")
     if profile["files"].get("skill_compliance_eval_cases"):
         skill_eval_cases_path = bundle_dir / profile["files"]["skill_compliance_eval_cases"]
         ensure(skill_eval_cases_path.is_file(), f"Missing {skill_eval_cases_path}")
@@ -114,6 +118,7 @@ def validate_bundle(bundle_dir: Path) -> dict:
     sft_rows = read_jsonl(sft_path)
     eval_rows = read_jsonl(evals_path)
     skill_eval_rows = read_jsonl_if_exists(skill_eval_cases_path)
+    promotion_policy = json.loads(promotion_policy_path.read_text(encoding="utf-8")) if promotion_policy_path else {}
     harmony_rows = read_jsonl_if_exists(harmony_sft_path)
     skill_compliance_rows = read_jsonl_if_exists(skill_compliance_path)
     ensure(sft_rows, "SFT dataset is empty")
@@ -320,6 +325,30 @@ def validate_bundle(bundle_dir: Path) -> dict:
             len(skill_eval_rows) >= int(quality_gates["min_skill_compliance_eval_cases"]),
             "Skill compliance eval dataset below minimum size gate",
         )
+    if "min_balanced_train_examples" in quality_gates and "balanced_train_dataset" in prepared_rows:
+        ensure(
+            len(prepared_rows["balanced_train_dataset"]) >= int(quality_gates["min_balanced_train_examples"]),
+            "Balanced train dataset below minimum size gate",
+        )
+    if "min_balanced_eval_examples" in quality_gates and "balanced_eval_dataset" in prepared_rows:
+        ensure(
+            len(prepared_rows["balanced_eval_dataset"]) >= int(quality_gates["min_balanced_eval_examples"]),
+            "Balanced eval dataset below minimum size gate",
+        )
+    if promotion_policy:
+        ensure(
+            promotion_policy.get("schema_version") == "dtf-promotion-policy/v1",
+            "promotion_policy.json has unsupported schema_version",
+        )
+        claim_levels = promotion_policy.get("claim_levels", {})
+        ensure(isinstance(claim_levels, dict) and claim_levels, "promotion_policy.json missing claim_levels")
+        for level in ("runtime-only", "training-ready", "learned-only-after-training", "weight-level-verified"):
+            ensure(level in claim_levels, f"promotion_policy.json missing claim level: {level}")
+            requires = claim_levels[level].get("requires", [])
+            ensure(
+                isinstance(requires, list) and requires and all(isinstance(item, str) and item for item in requires),
+                f"promotion_policy.json claim level '{level}' has invalid requires",
+            )
 
     return {
         "bundle": profile["name"],
@@ -331,8 +360,11 @@ def validate_bundle(bundle_dir: Path) -> dict:
         "skill_compliance_categories": dict(skill_category_counts),
         "eval_cases": len(eval_rows),
         "skill_compliance_eval_cases": len(skill_eval_rows),
+        "promotion_policy_path": profile["files"].get("promotion_policy", ""),
         "prepared_train_dataset": prepared_datasets.get("train_dataset", ""),
         "prepared_eval_dataset": prepared_datasets.get("eval_dataset", ""),
+        "prepared_balanced_train_dataset": prepared_datasets.get("balanced_train_dataset", ""),
+        "prepared_balanced_eval_dataset": prepared_datasets.get("balanced_eval_dataset", ""),
     }
 
 

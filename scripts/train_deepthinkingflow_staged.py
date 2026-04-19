@@ -22,6 +22,9 @@ EXTERNAL_STAGE_CONFIGS = [
     "training/DeepThinkingFlow-lora/config.external-local-safe.stage2.json",
     "training/DeepThinkingFlow-lora/config.external-local-safe.stage3.json",
 ]
+PARTIAL_STAGE_CONFIGS = [
+    "training/DeepThinkingFlow-lora/config.local-safe.stage1.json",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,6 +46,11 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Validate each stage config without launching real training.",
+    )
+    parser.add_argument(
+        "--partial",
+        action="store_true",
+        help="Run only the safest first local stage for partial adapter training.",
     )
     return parser.parse_args()
 
@@ -136,7 +144,12 @@ def run_stage(stage_index: int, stage_path: Path, dry_run: bool) -> int:
 
 def main() -> int:
     args = parse_args()
-    stage_configs = args.stage_configs or (EXTERNAL_STAGE_CONFIGS if args.external else DEFAULT_STAGE_CONFIGS)
+    if args.stage_configs:
+        stage_configs = args.stage_configs
+    elif args.partial:
+        stage_configs = PARTIAL_STAGE_CONFIGS
+    else:
+        stage_configs = EXTERNAL_STAGE_CONFIGS if args.external else DEFAULT_STAGE_CONFIGS
     resolved_stage_paths = [Path(path).resolve() for path in stage_configs]
     for index, stage_path in enumerate(resolved_stage_paths, start=1):
         if not stage_path.is_file():

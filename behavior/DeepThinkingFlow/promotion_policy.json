@@ -1,0 +1,58 @@
+{
+  "schema_version": "dtf-promotion-policy/v1",
+  "policy_name": "DeepThinkingFlow Golden Promotion Gate",
+  "claim_levels": {
+    "runtime-only": {
+      "requires": [
+        "valid_behavior_bundle",
+        "verified_runtime_boundary"
+      ]
+    },
+    "training-ready": {
+      "requires": [
+        "valid_behavior_bundle",
+        "prepared_train_dataset",
+        "prepared_eval_dataset",
+        "training_config",
+        "verified_runtime_boundary"
+      ]
+    },
+    "learned-only-after-training": {
+      "requires": [
+        "valid_behavior_bundle",
+        "prepared_train_dataset",
+        "prepared_eval_dataset",
+        "training_config",
+        "base_weight_hash",
+        "adapter_hash",
+        "eval_output",
+        "compare_report",
+        "lineage_complete_for_training_claim",
+        "lineage_complete_for_learned_claim",
+        "candidate_quality_is_non_regressing"
+      ]
+    },
+    "weight-level-verified": {
+      "requires": [
+        "valid_behavior_bundle",
+        "prepared_train_dataset",
+        "prepared_eval_dataset",
+        "training_config",
+        "base_weight_hash",
+        "merged_or_replacement_weight_hash",
+        "eval_output",
+        "compare_report",
+        "lineage_complete_for_training_claim",
+        "lineage_complete_for_learned_claim",
+        "candidate_quality_is_non_regressing",
+        "golden_release_gate_passed"
+      ]
+    }
+  },
+  "hard_failures": [
+    "missing_compare_report_for_learned_claim",
+    "missing_eval_output_for_learned_claim",
+    "quality_regression_on_learned_claim",
+    "incomplete_lineage_for_claim"
+  ]
+}

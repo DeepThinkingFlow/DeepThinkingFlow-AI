@@ -42,10 +42,12 @@
   },
   "quality_gates": {
     "min_sft_examples": 6,
-    "min_harmony_sft_examples": 45,
+    "min_harmony_sft_examples": 49,
     "min_skill_compliance_examples": 48,
     "min_eval_cases": 20,
-    "min_skill_compliance_eval_cases": 24,
+    "min_skill_compliance_eval_cases": 30,
+    "min_balanced_train_examples": 128,
+    "min_balanced_eval_examples": 14,
     "require_unique_eval_ids": true,
     "require_unique_skill_compliance_eval_ids": true,
     "require_unique_harmony_examples": true,
@@ -58,6 +60,9 @@
     "weight_level_claim_requires_base_weight_hash": true,
     "weight_level_claim_requires_adapter_or_merged_hash": true,
     "weight_level_claim_requires_compare_report": true,
+    "weight_level_claim_requires_non_regressing_quality": true,
+    "weight_level_claim_requires_release_gate": true,
+    "require_runtime_benchmark": true,
     "required_skill_compliance_categories": [
       "reject-false-weight-claim",
       "runtime-vs-learned",
@@ -68,6 +73,8 @@
   "prepared_datasets": {
     "train_dataset": "training/harmony_sft_plus_skill_compliance_vi.train.jsonl",
     "eval_dataset": "training/harmony_sft_plus_skill_compliance_vi.eval.jsonl",
+    "balanced_train_dataset": "training/harmony_sft_plus_skill_compliance_balanced_vi.train.jsonl",
+    "balanced_eval_dataset": "training/harmony_sft_plus_skill_compliance_balanced_vi.eval.jsonl",
     "base_train_dataset": "training/harmony_sft_vi.train.jsonl",
     "base_eval_dataset": "training/harmony_sft_vi.eval.jsonl",
     "skill_compliance_train_dataset": "training/harmony_sft_skill_compliance_vi.train.jsonl",
@@ -75,6 +82,7 @@
   },
   "files": {
     "system_prompt": "system_prompt.txt",
+    "promotion_policy": "promotion_policy.json",
     "sft_dataset": "training/sft_reasoning_vi.jsonl",
     "harmony_sft_dataset": "training/harmony_sft_vi.jsonl",
     "skill_compliance_dataset": "training/harmony_sft_skill_compliance_vi.jsonl",

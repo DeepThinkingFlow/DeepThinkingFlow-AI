@@ -70,6 +70,10 @@ COMMANDS = {
         "script": "prepare_deepthinkingflow_training_assets.py",
         "description": "Build deterministic base, skill-compliance, and combined train/eval assets.",
     },
+    "build-partial-lora-config": {
+        "script": "build_partial_lora_config.py",
+        "description": "Derive a safer partial-scope LoRA config for incremental training without mutating the base config.",
+    },
     "compile-bundle": {
         "script": "compile_behavior_bundle.py",
         "description": "Compile the behavior bundle into a compact runtime prompt pack.",
@@ -118,9 +122,29 @@ COMMANDS = {
         "script": "evaluate_reasoning_outputs.py",
         "description": "Score outputs against the reasoning eval rubric.",
     },
+    "generate-eval-predictions": {
+        "script": "generate_eval_predictions.py",
+        "description": "Generate predictions JSONL from a base model or a base+adapter pair for eval cases.",
+    },
+    "compare-eval-reports": {
+        "script": "compare_eval_reports.py",
+        "description": "Compare baseline and candidate eval summary JSON reports.",
+    },
     "report-artifacts": {
         "script": "report_deepthinkingflow_artifacts.py",
         "description": "Hash base weights, adapter outputs, eval files, and classify claim level.",
+    },
+    "benchmark-runtime": {
+        "script": "benchmark_deepthinkingflow_runtime.py",
+        "description": "Measure prompt rendering and tokenizer throughput for the runtime target.",
+    },
+    "aggregate-runs": {
+        "script": "aggregate_deepthinkingflow_runs.py",
+        "description": "Aggregate artifact, verify, and release reports into one lineage view.",
+    },
+    "check-promotion-readiness": {
+        "script": "check_promotion_readiness.py",
+        "description": "Check whether current evidence satisfies the promotion policy for a claim level.",
     },
     "release-manifest": {
         "script": "build_release_manifest.py",
@@ -128,7 +152,14 @@ COMMANDS = {
     },
 }
 
-VENV_PREFERRED_COMMANDS = {"bootstrap-training-env", "train-lora", "train-lora-staged", "eval", "preflight-train"}
+VENV_PREFERRED_COMMANDS = {
+    "bootstrap-training-env",
+    "train-lora",
+    "train-lora-staged",
+    "eval",
+    "preflight-train",
+    "benchmark-runtime",
+}
 
 
 def print_help() -> None:
@@ -150,6 +181,7 @@ def print_help() -> None:
     print("  python scripts/deepthinkingflow_cli.py prepare-datasets --num_proc 1 --ot3_limit 100 --oci_limit 100")
     print("  python scripts/deepthinkingflow_cli.py export-chat-jsonl --input-dir data/openthoughts3_processed --output-jsonl data/openthoughts3_processed.jsonl")
     print("  python scripts/deepthinkingflow_cli.py build-external-train-bundle --input-jsonl data/openthoughts3_processed.jsonl --input-jsonl data/opencodeinstruct_processed.jsonl --train-output data/external-train.jsonl --eval-output data/external-eval.jsonl")
+    print("  python scripts/deepthinkingflow_cli.py build-partial-lora-config --output out/partial-lora-config.json")
     print("  python scripts/deepthinkingflow_cli.py prepare-training-assets")
     print("  python scripts/deepthinkingflow_cli.py generate-skill-compliance")
     print("  python scripts/deepthinkingflow_cli.py compile-bundle")
@@ -157,6 +189,9 @@ def print_help() -> None:
     print("  python scripts/deepthinkingflow_cli.py preflight-all")
     print("  python scripts/deepthinkingflow_cli.py doctor")
     print("  python scripts/deepthinkingflow_cli.py verify")
+    print("  python scripts/deepthinkingflow_cli.py benchmark-runtime --iterations 5")
+    print("  python scripts/deepthinkingflow_cli.py aggregate-runs --search-root out")
+    print("  python scripts/deepthinkingflow_cli.py check-promotion-readiness --claim-level runtime-only --verify-report /tmp/dtf-verify.json")
     print("  python scripts/deepthinkingflow_cli.py tiny-smoke-release")
     print("  python scripts/deepthinkingflow_cli.py release-manifest --output out/release-manifest.json")
     print("  python scripts/deepthinkingflow_cli.py help train-lora")
