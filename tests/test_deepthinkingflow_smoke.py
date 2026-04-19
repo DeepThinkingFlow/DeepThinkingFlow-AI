@@ -22,6 +22,16 @@ import compile_behavior_bundle as compile_bundle
 import deepthinkingflow_cli as cli
 import deepthinkingflow_env as dtf_env
 import cuda_backend_status as cuda_status_script
+import apple_backend_status as apple_status_script
+import apple_mlx_adapter_status as apple_mlx_status_script
+import apple_mlx_weight_loader_check as apple_mlx_weight_check_script
+import apple_mlx_attention_shape_check as apple_mlx_attn_shape_script
+import apple_mlx_mlp_key_dump as apple_mlx_mlp_key_dump_script
+import apple_mlx_moe_metadata_check as apple_mlx_moe_metadata_script
+import apple_mlx_dequant_range_check as apple_mlx_dequant_range_script
+import apple_mlx_moe_forward_check as apple_mlx_moe_forward_script
+import apple_mlx_kv_cache_shape_check as apple_mlx_kv_cache_script
+import apple_mlx_inference_scaffold_status as apple_mlx_inference_status_script
 import export_external_runtime_assets as export_runtime
 import build_external_training_bundle as build_external_bundle
 import export_prepared_chat_jsonl as export_chat_jsonl
@@ -181,6 +191,36 @@ class CliSmokeTest(unittest.TestCase):
 
     def test_cuda_backend_status_command_is_registered(self) -> None:
         self.assertIn("cuda-backend-status", cli.COMMANDS)
+
+    def test_apple_backend_status_command_is_registered(self) -> None:
+        self.assertIn("apple-backend-status", cli.COMMANDS)
+
+    def test_apple_mlx_status_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-status", cli.COMMANDS)
+
+    def test_apple_mlx_weight_check_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-weight-check", cli.COMMANDS)
+
+    def test_apple_mlx_attn_shapes_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-attn-shapes", cli.COMMANDS)
+
+    def test_apple_mlx_mlp_keys_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-mlp-keys", cli.COMMANDS)
+
+    def test_apple_mlx_moe_metadata_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-moe-metadata", cli.COMMANDS)
+
+    def test_apple_mlx_dequant_range_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-dequant-range", cli.COMMANDS)
+
+    def test_apple_mlx_moe_forward_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-moe-forward", cli.COMMANDS)
+
+    def test_apple_mlx_kv_cache_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-kv-cache", cli.COMMANDS)
+
+    def test_apple_mlx_inference_status_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-inference-status", cli.COMMANDS)
 
 
 class SystemCheckSmokeTest(unittest.TestCase):
@@ -1163,7 +1203,7 @@ class SafetensorsInspectorTest(unittest.TestCase):
         }
         config = {
             "architectures": ["GptOssForCausalLM"],
-            "model_type": "gpt_oss",
+            "model_type": "deepthinkingflow",
             "vocab_size": 16,
             "hidden_size": 8,
             "intermediate_size": 4,
@@ -1639,6 +1679,290 @@ class CudaBackendScaffoldSmokeTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "exact SM number"):
             cuda_backend.recommended_cmake_configure_command("native")
+
+
+class AppleBackendScaffoldSmokeTest(unittest.TestCase):
+    def test_apple_backend_files_exist(self) -> None:
+        self.assertTrue((ROOT_DIR / "apple_backend" / "CMakeLists.txt").is_file())
+        self.assertTrue((ROOT_DIR / "apple_backend" / "src" / "metal_runtime.mm").is_file())
+        self.assertTrue((ROOT_DIR / "apple_backend" / "src" / "python_bindings.mm").is_file())
+        self.assertTrue((ROOT_DIR / "deepthinkingflow_apple" / "backend.py").is_file())
+        self.assertTrue((ROOT_DIR / "requirements-apple-backend.txt").is_file())
+
+    def test_apple_backend_status_script_reports_contract(self) -> None:
+        stdout = io.StringIO()
+        argv = ["apple_backend_status.py"]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_status_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertTrue(payload["performance_contract"]["prefer_unified_memory_views"])
+        self.assertTrue(payload["cpu_fallback_supported"])
+        self.assertIn("MLX", payload["required_stack"]["frameworks"])
+        self.assertIn("-DDTF_APPLE_SILICON_ENABLED=OFF", payload["build_modes"]["cpu_fallback_configure_command"])
+
+    def test_apple_mlx_status_script_reports_contract_without_mlx(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_adapter_status.py",
+            "--model-dir",
+            MODEL_DIR,
+            "--quantize-4bit",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_status_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertFalse(payload["mlx_available"])
+        self.assertTrue(payload["mlx_adapter"]["runtime_contract"]["unified_memory_first"])
+        self.assertIn("MPSGraph fused path", payload["next_steps"][1])
+
+    def test_apple_mlx_weight_check_uses_header_fallback(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_weight_loader_check.py",
+            "--weights",
+            str((ROOT_DIR / "original" / "model.safetensors").resolve()),
+            "--config",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow" / "config.json").resolve()),
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_weight_check_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertFalse(payload["mlx_available"])
+        self.assertIn("block.0.attn.qkv.weight", payload["sample_shapes"])
+        self.assertTrue(isinstance(payload["verified_shapes"]["passed"], bool))
+
+    def test_apple_mlx_attention_shape_check_reports_expected_shapes(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_attention_shape_check.py",
+            "--config",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow" / "config.json").resolve()),
+            "--seq-len",
+            "16",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_attn_shape_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        shapes = payload["attention_shapes"]
+        self.assertEqual(shapes["qkv_linear"], [16, 5120])
+        self.assertEqual(shapes["q_reshaped"], [16, 64, 64])
+        self.assertEqual(shapes["k_reshaped"], [16, 8, 64])
+        self.assertEqual(shapes["v_reshaped"], [16, 8, 64])
+        self.assertEqual(shapes["k_repeated"], [16, 64, 64])
+        self.assertEqual(shapes["v_repeated"], [16, 64, 64])
+
+    def test_apple_mlx_mlp_key_dump_reports_real_tensor_names(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_mlp_key_dump.py",
+            "--weights",
+            str((ROOT_DIR / "original" / "model.safetensors").resolve()),
+            "--layer-index",
+            "0",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_mlp_key_dump_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertIn("block.0.mlp.gate.weight", payload["mlp_keys"])
+        self.assertIn("block.0.mlp.mlp1_weight.blocks", payload["mlp_keys"])
+        self.assertIn("block.0.mlp.mlp2_weight.blocks", payload["mlp_keys"])
+
+    def test_apple_mlx_moe_metadata_check_reports_quantized_ffn_contract(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_moe_metadata_check.py",
+            "--weights",
+            str((ROOT_DIR / "original" / "model.safetensors").resolve()),
+            "--config",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow" / "config.json").resolve()),
+            "--layer-index",
+            "0",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_moe_metadata_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        inspection = payload["inspection"]
+        self.assertEqual(result, 0)
+        self.assertTrue(inspection["passed"])
+        self.assertEqual(inspection["router"]["gate_weight_shape"], [32, 2880])
+        self.assertEqual(inspection["ffn"]["mlp1_bias_shape"], [32, 5760])
+        self.assertFalse(inspection["quantization"]["dense_float_ffn_available_directly"])
+        self.assertTrue(inspection["claim_boundary"]["needs_dequant_or_native_kernel_for_true_forward"])
+
+    def test_apple_mlx_dequant_range_check_reports_shapes_and_ranges(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_dequant_range_check.py",
+            "--weights",
+            str((ROOT_DIR / "original" / "model.safetensors").resolve()),
+            "--layer-index",
+            "0",
+            "--projection",
+            "mlp1",
+            "--expert-index",
+            "0",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_dequant_range_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["unpacked_shape"], [5760, 90, 32])
+        self.assertEqual(payload["expanded_scales_shape"], [5760, 90, 32])
+        self.assertEqual(payload["unpacked_flat_shape"], [5760, 2880])
+        self.assertEqual(payload["expanded_scales_flat_shape"], [5760, 2880])
+        self.assertEqual(payload["dequant_flat_shape"], [5760, 2880])
+        self.assertGreaterEqual(payload["ranges"]["unpacked"]["min"], 0.0)
+        self.assertLessEqual(payload["ranges"]["unpacked"]["max"], 15.0)
+        self.assertTrue(payload["claim_boundary"]["provisional_decode_only"])
+
+    def test_apple_mlx_moe_forward_check_reports_ranges_for_both_activations(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_moe_forward_check.py",
+            "--weights",
+            str((ROOT_DIR / "original" / "model.safetensors").resolve()),
+            "--config",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow" / "config.json").resolve()),
+            "--layer-index",
+            "0",
+            "--seq-len",
+            "2",
+            "--activation",
+            "both",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_moe_forward_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["config_hidden_act"], "silu")
+        self.assertEqual(len(payload["results"]), 2)
+        self.assertEqual({item["activation"] for item in payload["results"]}, {"silu", "swiglu"})
+        by_activation = {item["activation"]: item for item in payload["results"]}
+        self.assertFalse(by_activation["silu"]["compatible_with_mlp2"])
+        self.assertIn("hidden width 5760", by_activation["silu"]["structural_issue"])
+        self.assertTrue(by_activation["swiglu"]["compatible_with_mlp2"])
+        self.assertIn("x_normed", by_activation["swiglu"])
+        self.assertIn("output", by_activation["swiglu"])
+        self.assertIn("abs_max", by_activation["swiglu"]["output"])
+        self.assertIn("residual_output", by_activation["swiglu"])
+        self.assertTrue(payload["claim_boundary"]["provisional_moe_forward"])
+
+    def test_apple_mlx_moe_forward_check_supports_scaled_input_mode(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_moe_forward_check.py",
+            "--weights",
+            str((ROOT_DIR / "original" / "model.safetensors").resolve()),
+            "--config",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow" / "config.json").resolve()),
+            "--layer-index",
+            "0",
+            "--seq-len",
+            "1",
+            "--activation",
+            "swiglu",
+            "--input-scale",
+            "0.1",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_moe_forward_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["input_mode"], "scaled-normal:0.1")
+        self.assertEqual(payload["input_scale"], 0.1)
+        self.assertEqual(len(payload["results"]), 1)
+        self.assertTrue(payload["results"][0]["compatible_with_mlp2"])
+
+    def test_apple_mlx_kv_cache_shape_check_trims_sliding_layers(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_kv_cache_shape_check.py",
+            "--config",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow" / "config.json").resolve()),
+            "--layer-index",
+            "0",
+            "--seq-len",
+            "1",
+            "--cached-seq-len",
+            "256",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_kv_cache_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        shapes = payload["attention_shapes"]
+        self.assertEqual(result, 0)
+        self.assertEqual(shapes["layer_type"], "sliding_attention")
+        self.assertEqual(shapes["kv_cache_after_append"]["k"], [257, 8, 64])
+        self.assertEqual(shapes["kv_cache_after_trim"]["k"], [128, 8, 64])
+        self.assertEqual(shapes["attn_scores"], [64, 1, 128])
+
+    def test_apple_mlx_kv_cache_shape_check_keeps_full_layers_untrimmed(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_kv_cache_shape_check.py",
+            "--config",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow" / "config.json").resolve()),
+            "--layer-index",
+            "1",
+            "--seq-len",
+            "1",
+            "--cached-seq-len",
+            "256",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_kv_cache_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        shapes = payload["attention_shapes"]
+        self.assertEqual(result, 0)
+        self.assertEqual(shapes["layer_type"], "full_attention")
+        self.assertEqual(shapes["kv_cache_after_append"]["k"], [257, 8, 64])
+        self.assertEqual(shapes["kv_cache_after_trim"]["k"], [257, 8, 64])
+        self.assertEqual(shapes["attn_scores"], [64, 1, 257])
+
+    def test_apple_mlx_inference_status_reports_embedding_and_head_keys(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_inference_scaffold_status.py",
+            "--model-dir",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow").resolve()),
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_inference_status_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["embedding_key"], "embedding.weight")
+        self.assertEqual(payload["lm_head_key"], "unembedding.weight")
+        self.assertEqual(payload["num_hidden_layers"], 24)
+        self.assertEqual(payload["layer_types"][0], "sliding_attention")
 
 
 class CompareEvalReportsTest(unittest.TestCase):

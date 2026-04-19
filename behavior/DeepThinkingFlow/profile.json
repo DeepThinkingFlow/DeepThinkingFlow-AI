@@ -2,8 +2,8 @@
   "name": "DeepThinkingFlow",
   "target_model": "DeepThinkingFlow",
   "runtime_compatibility": {
-    "upstream_model_id": "openai/gpt-oss-20b",
-    "transformers_model_type": "gpt_oss"
+    "upstream_model_id": "DeepThinkingFlow",
+    "transformers_model_type": "DeepThinkingFlow-compatible"
   },
   "mode": "runtime-steering-and-sft-seed",
   "guarantees": {

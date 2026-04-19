@@ -154,6 +154,46 @@ COMMANDS = {
         "script": "cuda_backend_status.py",
         "description": "Report CUDA backend scaffold/build readiness for the NVIDIA path.",
     },
+    "apple-backend-status": {
+        "script": "apple_backend_status.py",
+        "description": "Report Apple Silicon backend scaffold/build readiness for the Metal/MLX path.",
+    },
+    "apple-mlx-status": {
+        "script": "apple_mlx_adapter_status.py",
+        "description": "Report MLX-first inference adapter readiness for the Apple Silicon path.",
+    },
+    "apple-mlx-weight-check": {
+        "script": "apple_mlx_weight_loader_check.py",
+        "description": "Load DeepThinkingFlow weights through MLX and verify first-block shapes.",
+    },
+    "apple-mlx-attn-shapes": {
+        "script": "apple_mlx_attention_shape_check.py",
+        "description": "Dry-run RMSNorm + QKV split + GQA attention shapes for DeepThinkingFlow.",
+    },
+    "apple-mlx-mlp-keys": {
+        "script": "apple_mlx_mlp_key_dump.py",
+        "description": "Dump the real block.N.mlp.* tensor keys from the safetensors header.",
+    },
+    "apple-mlx-moe-metadata": {
+        "script": "apple_mlx_moe_metadata_check.py",
+        "description": "Inspect quantized MoE/FFN metadata and router shapes for one DeepThinkingFlow block.",
+    },
+    "apple-mlx-dequant-range": {
+        "script": "apple_mlx_dequant_range_check.py",
+        "description": "Unpack one quantized expert projection and report provisional dequant ranges.",
+    },
+    "apple-mlx-moe-forward": {
+        "script": "apple_mlx_moe_forward_check.py",
+        "description": "Run a provisional MoE forward with dequant-on-the-fly and report output ranges.",
+    },
+    "apple-mlx-kv-cache": {
+        "script": "apple_mlx_kv_cache_shape_check.py",
+        "description": "Dry-run alternating attention layer-types and KV-cache trim behavior.",
+    },
+    "apple-mlx-inference-status": {
+        "script": "apple_mlx_inference_scaffold_status.py",
+        "description": "Report tokenizer, embedding/lm_head keys, and inference-loop scaffold readiness.",
+    },
 }
 
 VENV_PREFERRED_COMMANDS = {
@@ -197,6 +237,16 @@ def print_help() -> None:
     print("  python scripts/deepthinkingflow_cli.py aggregate-runs --search-root out")
     print("  python scripts/deepthinkingflow_cli.py check-promotion-readiness --claim-level runtime-only --verify-report /tmp/dtf-verify.json")
     print("  python scripts/deepthinkingflow_cli.py cuda-backend-status --cuda-arch 89")
+    print("  python scripts/deepthinkingflow_cli.py apple-backend-status")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-status --quantize-4bit")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-weight-check")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-attn-shapes --seq-len 16")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-mlp-keys --layer-index 0")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-moe-metadata --layer-index 0")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-dequant-range --projection mlp1 --expert-index 0")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-moe-forward --activation both --seq-len 8")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-kv-cache --layer-index 0 --seq-len 1 --cached-seq-len 256")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-inference-status")
     print("  python scripts/deepthinkingflow_cli.py tiny-smoke-release")
     print("  python scripts/deepthinkingflow_cli.py release-manifest --output out/release-manifest.json")
     print("  python scripts/deepthinkingflow_cli.py help train-lora")

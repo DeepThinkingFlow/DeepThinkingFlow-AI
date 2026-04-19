@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ollama-model",
-        default="gpt-oss:20b",
+        default="deepthinkingflow:20b",
         help="Base Ollama model tag to reference in the generated Modelfile.",
     )
     parser.add_argument(

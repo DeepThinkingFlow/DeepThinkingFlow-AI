@@ -1,7 +1,7 @@
 # DeepThinkingFlow Model Profile
 
 This profile is derived from `original/model.safetensors`, `original/config.json`, and `original/dtypes.json` in this repo.
-DeepThinkingFlow currently runs on top of an upstream GPT-OSS-compatible checkpoint, so the raw tensor and architecture facts below still describe that compatibility layer.
+DeepThinkingFlow currently runs on top of an upstream DeepThinkingFlow-compatible checkpoint, so the raw tensor and architecture facts below still describe that compatibility layer.
 
 ## Snapshot
 

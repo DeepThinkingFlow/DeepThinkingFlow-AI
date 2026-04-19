@@ -155,7 +155,7 @@ def import_transformers_runtime() -> tuple[Any, Any]:
     except Exception as exc:
         raise SystemExit(
             "torch and transformers are required to run generation. "
-            "See the official GPT-OSS compatibility guidance: pip install -U transformers accelerate torch triton==3.4 kernels"
+            "See the official DeepThinkingFlow compatibility guidance: pip install -U transformers accelerate torch triton==3.4 kernels"
         ) from exc
     return AutoModelForCausalLM, AutoTokenizer
 

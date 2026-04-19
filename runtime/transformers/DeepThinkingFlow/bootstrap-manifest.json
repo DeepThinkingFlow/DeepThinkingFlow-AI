@@ -1,5 +1,5 @@
 {
-  "model_id": "openai/gpt-oss-20b",
+  "model_id": "DeepThinkingFlow",
   "dest": "runtime/transformers/DeepThinkingFlow",
   "downloaded_files": [
     "config.json",

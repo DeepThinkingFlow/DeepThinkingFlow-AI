@@ -86,7 +86,7 @@ def main() -> int:
         run_command(
             [
                 sys.executable,
-                str((ROOT_DIR / "scripts" / "create_tiny_gpt_oss_smoke_model.py").resolve()),
+                str((ROOT_DIR / "scripts" / "create_tiny_deepthinkingflow_smoke_model.py").resolve()),
                 "--output-dir",
                 str(model_dir.relative_to(ROOT_DIR)),
             ],

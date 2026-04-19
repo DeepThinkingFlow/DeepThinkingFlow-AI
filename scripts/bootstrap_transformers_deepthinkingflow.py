@@ -25,7 +25,7 @@ DEFAULT_WEIGHT_MANIFEST = "model.safetensors.index.json"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Bootstrap a local DeepThinkingFlow Transformers directory from upstream openai/gpt-oss-20b metadata."
+        description="Bootstrap a local DeepThinkingFlow Transformers directory from upstream DeepThinkingFlow-compatible metadata."
     )
     parser.add_argument(
         "--model-id",
@@ -114,7 +114,7 @@ def main() -> int:
         "downloaded_files": downloaded,
         "includes_weights": args.include_weights,
         "note": (
-            "DeepThinkingFlow currently depends on the official GPT-OSS HF root files "
+            "DeepThinkingFlow currently depends on the official DeepThinkingFlow-compatible HF root files "
             "and sharded weights for Transformers compatibility. "
             "The original/original model.safetensors file is informative but is not "
             "a complete Transformers model directory by itself."

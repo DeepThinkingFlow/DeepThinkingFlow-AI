@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/Transformers-5.5%2B-orange?style=for-the-badge&logo=huggingface&logoColor=white" />
   <img src="https://img.shields.io/badge/PyTorch-2.11%2B-red?style=for-the-badge&logo=pytorch&logoColor=white" />
   <img src="https://img.shields.io/badge/PEFT-0.19%2B-purple?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Tests-74%2F74%20Passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" />
+  <img src="https://img.shields.io/badge/Tests-56%2F56%20Passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" />
 </p>
 
 <h1 align="center">DeepThinkingFlow-AI</h1>
@@ -34,15 +34,9 @@
 - [CLI Reference](#cli-reference)
 - [Workflows](#workflows)
   - [Inference Workflow](#1-inference-workflow)
-  - [Training Workflow](#2-training-workflow)
-  - [Evaluation Workflow](#3-evaluation-workflow)
+  - [Training Workflow](#2-training-work)
+  - [Evaluation Workflow](#3-evaluation-low)
   - [Full Pipeline Workflow](#4-full-pipeline-end-to-end)
-- [How the AI Works](#how-the-ai-works)
-  - [Neural Network Forward Pass](#neural-network-forward-pass)
-  - [Mixture-of-Experts Routing](#mixture-of-experts-routing)
-  - [Channel-Based Reasoning Pipeline](#channel-based-reasoning-pipeline)
-  - [LoRA Adapter Injection](#lora-adapter-injection)
-  - [Behavior Steering Data Flow](#behavior-steering-data-flow)
 - [Behavior Bundle System](#behavior-bundle-system)
 - [Model Profile](#model-profile)
 - [Training Configuration](#training-configuration)
@@ -71,7 +65,7 @@ DeepThinkingFlow includes:
 | **Heuristic Evaluation** | Scores outputs against a trait checklist and rubric rules, including skill compliance traits |
 | **Safetensors Inspector** | Header-only audit of the local weight file, validating tensor shapes against architecture config |
 | **Artifact Reporter** | Hashes base weights, adapter outputs, eval files, and classifies the strongest supportable claim level |
-| **Unified CLI** | Single entry point for all 40 Python scripts via `deepthinkingflow_cli.py` (33 commands) |
+| **Unified CLI** | Single entry point for all 33 Python scripts via `deepthinkingflow_cli.py` (28 commands) |
 
 ### Key Features
 
@@ -81,7 +75,7 @@ DeepThinkingFlow includes:
 - **Structured Output** -- Goal, Assumptions, Analysis, Answer, Examples, Checks
 - **Skill Compliance Ladder** -- explicit separation of runtime-only, training-ready, and learned-only-after-training claims
 - **No hidden chain-of-thought claims** -- only visible analysis when opted in
-- **74/74 smoke tests passing** -- covers CLI, runtime helpers, chat flow, prompt rendering, one-shot generation, bundle validation, evaluator traits, training dry-run, asset builder, safetensors inspector, artifact reporter, claim gates, doctor flow, tiny-smoke release orchestration, staged training, partial LoRA config, promotion readiness, and lineage verification
+- **56/56 smoke tests passing** -- covers CLI, runtime helpers, chat flow, prompt rendering, one-shot generation, bundle validation, evaluator traits, training dry-run, asset builder, safetensors inspector, artifact reporter, claim gates, doctor flow, and tiny-smoke release orchestration
 
 ---
 
@@ -92,10 +86,10 @@ graph TB
     User["User Terminal"]
 
     subgraph CLI["CLI Layer"]
-        CLIScript["deepthinkingflow_cli.py<br/><em>Unified launcher - 33 commands</em>"]
+        CLIScript["deepthinkingflow_cli.py<br/><em>Unified launcher - 28 commands</em>"]
     end
 
-    subgraph Scripts["Script Layer (40 scripts)"]
+    subgraph Scripts["Script Layer (33 scripts)"]
         Chat["chat_deepthinkingflow.py"]
         Run["run_transformers_deepthinkingflow.py"]
         Render["render_transformers_deepthinkingflow_prompt.py"]
@@ -236,7 +230,7 @@ deepthinkingflow/
 │       └── DeepThinkingFlow-tiny-smoke/               # Tiny model for smoke tests
 │
 ├── scripts/
-│   ├── deepthinkingflow_cli.py                        # Unified CLI launcher (33 commands)
+│   ├── deepthinkingflow_cli.py                        # Unified CLI launcher (28 commands)
 │   ├── deepthinkingflow_runtime.py                    # Shared runtime helpers
 │   ├── deepthinkingflow_env.py                        # Environment and dependency detection
 │   ├── chat_deepthinkingflow.py                       # Multi-turn terminal chat
@@ -844,209 +838,7 @@ flowchart TD
     H --> I["Evaluate and Compare<br/>eval --eval-cases ... --predictions ...<br/>Review trait_pass_rate + rubric_pass_rate<br/>Skill-compliance eval (stricter)"]
     I --> J{"Repeat with new config?"}
     J -- Yes --> F
-    J -- No --> K["Final: 74/74 tests pass"]
-```
-
----
-
-## How the AI Works
-
-This section describes the internal mechanics of DeepThinkingFlow at the neural network level: how tokens flow through transformer blocks, how Mixture-of-Experts routing selects active experts, how the channel system separates reasoning from output, how LoRA adapters inject learned behavior, and how behavior steering operates across the full stack.
-
-### Neural Network Forward Pass
-
-The complete forward pass from raw token IDs to output logits across all 24 transformer blocks:
-
-```mermaid
-flowchart TD
-    Input["Input Token IDs<br/>[batch, seq]"]
-    Input --> Embed["Embedding Lookup<br/>embedding.weight [201088, 2880]<br/>BF16 -- maps token ID to vector"]
-
-    Embed --> Block0["Block 0: Sliding Attention<br/>window=128 tokens<br/>6 attention tensors + 9 MoE tensors"]
-    Block0 --> Block1["Block 1: Full Attention<br/>attends to all positions<br/>6 attention tensors + 9 MoE tensors"]
-    Block1 --> Block2["Block 2: Sliding Attention"]
-    Block2 --> Block3["Block 3: Full Attention"]
-    Block3 --> Dots["Blocks 4-21<br/>alternating sliding and full attention<br/>15 tensors per block"]
-    Dots --> Block22["Block 22: Sliding Attention"]
-    Block22 --> Block23["Block 23: Full Attention"]
-
-    Block23 --> FinalNorm["Final RMS Norm<br/>norm.scale [2880] BF16"]
-    FinalNorm --> LMHead["LM Head Projection<br/>unembedding.weight [201088, 2880]<br/>BF16 -- projects to vocab logits"]
-    LMHead --> Logits["Output Logits<br/>[batch, seq, 201088]<br/>probability over 201K tokens"]
-    Logits --> Sampling["Sampling Strategy<br/>temperature=0.7, top_p=0.95<br/>do_sample=true"]
-    Sampling --> NextToken["Next Token ID"]
-    NextToken -.->|"autoregressive loop"| Input
-```
-
-### Mixture-of-Experts Routing
-
-Each of the 24 transformer blocks contains a Mixture-of-Experts MLP. The router gate selects 4 out of 32 experts per token:
-
-```mermaid
-flowchart TD
-    HiddenState["Hidden State from Attention<br/>[batch, seq, 2880]"]
-
-    HiddenState --> PreNorm["Pre-MLP RMS Norm<br/>mlp.norm.scale [2880] BF16"]
-    PreNorm --> Router["MoE Router Gate<br/>mlp.gate.weight [32, 2880] BF16<br/>mlp.gate.bias [32] BF16<br/>Produces 32 expert scores"]
-
-    Router --> TopK{"Top-K Selection<br/>K=4 of 32 experts"}
-
-    TopK --> E1["Expert 1<br/>SwiGLU Up: mlp1 [5760, ...] FP4<br/>SwiGLU Down: mlp2 [2880, ...] FP4"]
-    TopK --> E2["Expert 2<br/>SwiGLU Up + Down<br/>FP4 weights + UE8 scales"]
-    TopK --> E3["Expert 3<br/>SwiGLU Up + Down<br/>FP4 weights + UE8 scales"]
-    TopK --> E4["Expert 4<br/>SwiGLU Up + Down<br/>FP4 weights + UE8 scales"]
-    TopK -.-> Inactive["Experts 5-32<br/>INACTIVE for this token<br/>zero compute cost"]
-
-    E1 --> WeightedSum["Weighted Expert Sum<br/>router softmax weights<br/>combine 4 expert outputs"]
-    E2 --> WeightedSum
-    E3 --> WeightedSum
-    E4 --> WeightedSum
-
-    HiddenState --> Residual["Residual Connection"]
-    WeightedSum --> Residual
-    Residual --> Output["Block Output<br/>[batch, seq, 2880]"]
-```
-
-> **Key insight:** Only 4 of 32 experts activate per token, so the model uses ~4.19B active parameters per token despite having ~21.5B total parameters. FP4 expert weights with UE8 quantization scales keep the full model at ~12.82 GiB on disk.
-
-### Channel-Based Reasoning Pipeline
-
-DeepThinkingFlow separates internal reasoning from user-facing output using a channel system embedded in the chat template:
-
-```mermaid
-flowchart TD
-    UserInput["User Message"]
-    UserInput --> BuildMessages["Build Messages Array<br/>[system_prompt, user_message]"]
-    BuildMessages --> ChatTemplate["Apply Chat Template<br/>chat_template.jinja ~16 KB<br/>Injects reasoning_effort level"]
-    ChatTemplate --> Generate["model.generate()<br/>Autoregressive token generation"]
-
-    Generate --> RawOutput["Raw Decoded Completion<br/>Contains channel tokens"]
-
-    RawOutput --> AnalysisParse["extract_analysis_text()<br/>Find: channel=analysis + message<br/>Stop at: end, call, return,<br/>or channel=final"]
-    RawOutput --> FinalParse["extract_final_text()<br/>Find: channel=final + message<br/>Stop at: return, call, end"]
-
-    AnalysisParse --> Sanitize["Sanitize Analysis<br/>Strip channel markers<br/>Drop channel-only lines<br/>Truncate to 700 chars max"]
-    FinalParse --> CleanFinal["Clean Final Text<br/>Remove channel tokens<br/>Normalize whitespace"]
-
-    Sanitize --> AnalysisOut["analysis_text<br/>Hidden by default<br/>Enable with --show-analysis"]
-    CleanFinal --> FinalOut["final_text<br/>Always shown to user"]
-
-    subgraph ChannelTokens["Channel Token Format"]
-        CT1["start: assistant"]
-        CT2["channel: analysis + message"]
-        CT3["Internal reasoning here..."]
-        CT4["end"]
-        CT5["start: assistant"]
-        CT6["channel: final + message"]
-        CT7["User-facing answer here..."]
-        CT8["return"]
-        CT1 --> CT2 --> CT3 --> CT4 --> CT5 --> CT6 --> CT7 --> CT8
-    end
-
-    AnalysisOut --> Response["JSON Response<br/>final_text + analysis_text<br/>+ decoded_completion"]
-    FinalOut --> Response
-```
-
-### LoRA Adapter Injection
-
-How LoRA low-rank matrices are injected into the pretrained attention layers during fine-tuning:
-
-```mermaid
-flowchart TD
-    subgraph BaseModel["Base Model Attention (Frozen)"]
-        QProj["q_proj<br/>W_q [4096, 2880]<br/>64 query heads x 64 dim<br/>Weights FROZEN"]
-        KProj["k_proj<br/>W_k [512, 2880]<br/>8 KV heads x 64 dim<br/>Weights FROZEN"]
-        VProj["v_proj<br/>W_v [512, 2880]<br/>8 KV heads x 64 dim<br/>Weights FROZEN"]
-        OProj["o_proj<br/>W_o [2880, 4096]<br/>Output projection<br/>Weights FROZEN"]
-    end
-
-    subgraph LoRAAdapters["LoRA Adapters (Trainable)"]
-        QLoRA_A["q_proj LoRA_A<br/>[r=24, 2880]<br/>Down-projection"]
-        QLoRA_B["q_proj LoRA_B<br/>[4096, r=24]<br/>Up-projection"]
-        KLoRA_A["k_proj LoRA_A<br/>[r=24, 2880]"]
-        KLoRA_B["k_proj LoRA_B<br/>[512, r=24]"]
-        VLoRA_A["v_proj LoRA_A<br/>[r=24, 2880]"]
-        VLoRA_B["v_proj LoRA_B<br/>[512, r=24]"]
-        OLoRA_A["o_proj LoRA_A<br/>[r=24, 4096]"]
-        OLoRA_B["o_proj LoRA_B<br/>[2880, r=24]"]
-    end
-
-    InputX["Input x"] --> QProj
-    InputX --> QLoRA_A --> QLoRA_B
-    QProj --> QSum["Q = W_q x + alpha/r * B_q A_q x"]
-    QLoRA_B --> QSum
-
-    InputX --> KProj
-    InputX --> KLoRA_A --> KLoRA_B
-    KProj --> KSum["K = W_k x + alpha/r * B_k A_k x"]
-    KLoRA_B --> KSum
-
-    InputX --> VProj
-    InputX --> VLoRA_A --> VLoRA_B
-    VProj --> VSum["V = W_v x + alpha/r * B_v A_v x"]
-    VLoRA_B --> VSum
-
-    QSum --> MHA["Multi-Head Attention<br/>64 query heads, 8 KV heads<br/>head_dim=64"]
-    KSum --> MHA
-    VSum --> MHA
-
-    MHA --> OProj
-    MHA --> OLoRA_A --> OLoRA_B
-    OProj --> OSum["Output = W_o attn + alpha/r * B_o A_o attn"]
-    OLoRA_B --> OSum
-
-    subgraph Config["LoRA Config"]
-        LR["r=24, alpha=48<br/>dropout=0.03<br/>scaling = alpha/r = 2.0<br/>trainable_params = 39,936<br/>trainable_ratio = 0.076%"]
-    end
-```
-
-### Behavior Steering Data Flow
-
-The complete data flow showing how behavior steering operates across all layers of the system without modifying base weights:
-
-```mermaid
-flowchart TD
-    subgraph L1["Layer 1: Runtime Steering"]
-        SP["system_prompt.txt<br/>Tagged blocks:<br/>identity, hard_rules,<br/>task_classifier, depth_policy,<br/>output_policy, quality_bar"]
-        PJ["profile.json<br/>Quality gates<br/>Compliance model<br/>Guarantees"]
-        CT["chat_template.jinja<br/>Channel routing<br/>reasoning_effort injection<br/>~16 KB template"]
-        SP --> Runtime["Runtime Prompt Assembly<br/>load_system_prompt()<br/>build messages array"]
-        PJ --> Runtime
-        CT --> Runtime
-    end
-
-    subgraph L2["Layer 2: Training Data"]
-        Base["harmony_sft_vi.jsonl<br/>49 base examples<br/>Vietnamese bilingual"]
-        Skill["harmony_sft_skill_compliance_vi.jsonl<br/>48+ skill compliance examples<br/>4 categories"]
-        Base --> Prep["prepare_training_assets<br/>Merge + split + validate<br/>Ensure train/eval disjoint"]
-        Skill --> Prep
-        Prep --> Train["combined.train.jsonl"]
-        Prep --> Eval["combined.eval.jsonl"]
-    end
-
-    subgraph L3["Layer 3: Adapter Training"]
-        Train --> Trainer["LoRA/QLoRA Trainer<br/>Preflight checks<br/>Target module validation<br/>Stability callbacks"]
-        Eval --> Trainer
-        Trainer --> Adapter["LoRA Adapter<br/>adapter_model.safetensors<br/>39,936 trainable params"]
-    end
-
-    subgraph L4["Layer 4: Verification"]
-        Adapter --> ArtifactReport["Artifact Reporter<br/>SHA-256 hashes<br/>Claim level classification"]
-        ArtifactReport --> EvalScore["Heuristic Evaluator<br/>22 trait types<br/>7 rubric types<br/>Skill compliance scoring"]
-        EvalScore --> Verify["Verification Suite<br/>74/74 tests<br/>Bundle health + preflight"]
-    end
-
-    subgraph ClaimLadder["Claim Compliance Ladder"]
-        CL1["runtime-only<br/>Prompt steering only"]
-        CL2["training-ready<br/>SFT data defines target"]
-        CL3["learned-only-after-training<br/>Adapter with eval evidence"]
-        CL4["weight-level-verified<br/>Merged checkpoint + eval"]
-        CL1 --> CL2 --> CL3 --> CL4
-    end
-
-    Runtime --> Inference["Model Inference<br/>24 transformer blocks<br/>32 experts per block<br/>4 active per token"]
-    Adapter -.->|"optional merge"| Inference
-    Verify --> ClaimLadder
+    J -- No --> K["Final: 56/56 tests pass"]
 ```
 
 ---
@@ -1226,7 +1018,7 @@ Same as LoRA, with these additions:
 
 ## Training Parameter Evolution
 
-DeepThinkingFlow underwent 4 progressive iterations of adapter parameter scaling, increasing trainable parameters from baseline to 6x the original count. All iterations completed successfully with passing training runs, artifact report verification, and the current full smoke suite (74/74).
+DeepThinkingFlow underwent 4 progressive iterations of adapter parameter scaling, increasing trainable parameters from baseline to 6x the original count. All iterations completed successfully with passing training runs, artifact report verification, and the current full smoke suite (56/56).
 
 ### Evolution Summary
 
@@ -1258,7 +1050,7 @@ DeepThinkingFlow underwent 4 progressive iterations of adapter parameter scaling
 | `lora_missing_targets` | [] (none) |
 | Training run | Completed successfully |
 | Artifact report | Pass |
-| Test suite | 74/74 pass |
+| Test suite | 56/56 pass |
 
 ### Parameter Evolution Workflow
 
@@ -1290,7 +1082,7 @@ flowchart TD
 
     M1 --> M2 --> M3 --> M4
 
-    M4 --> FINAL["Final State<br/>trainable_params=39,936 (6x baseline)<br/>total_params=52,394,256<br/>74/74 tests pass<br/>All artifact reports pass"]
+    M4 --> FINAL["Final State<br/>trainable_params=39,936 (6x baseline)<br/>total_params=52,394,256<br/>56/56 tests pass<br/>All artifact reports pass"]
 ```
 
 ### Loss Progression
@@ -1325,7 +1117,7 @@ Initial adapter configuration establishing the starting point.
 | `train_loss` | 12.2351 |
 | `eval_loss` | 12.2371 |
 
-Result: Training run completed, artifact report pass, 74 tests pass.
+Result: Training run completed, artifact report pass, 56 tests pass.
 
 #### Milestone 2: Reform 1 (2x Baseline)
 
@@ -1348,7 +1140,7 @@ First parameter scaling -- doubled LoRA rank and alpha, increased training data 
 | `train_loss` | 12.2199 |
 | `eval_loss` | 12.2248 |
 
-Result: Training run completed, artifact report pass, 74 tests pass.
+Result: Training run completed, artifact report pass, 56 tests pass.
 
 #### Milestone 3: Reform 2 (4x Baseline)
 
@@ -1371,7 +1163,7 @@ Second parameter scaling -- doubled rank and alpha again, increased epochs and t
 | `train_loss` | 12.1929 |
 | `eval_loss` | 12.1814 |
 
-Result: Training run completed, artifact report pass, 74 tests pass.
+Result: Training run completed, artifact report pass, 56 tests pass.
 
 #### Milestone 4: Reform 3 -- Final Configuration (6x Baseline)
 
@@ -1393,7 +1185,7 @@ Epochs, train samples, and eval samples were held constant from Reform 2.
 | `train_loss` | 12.1677 |
 | `eval_loss` | 12.1403 |
 
-Result: Training run completed, artifact report pass, 74 tests pass.
+Result: Training run completed, artifact report pass, 56 tests pass.
 
 ### Additional Hardening Measures
 
@@ -1413,7 +1205,7 @@ Beyond parameter scaling, the following improvements were applied throughout the
 
 ## Testing
 
-### Smoke Tests (74/74)
+### Smoke Tests (56/56)
 
 ```bash
 python -m pytest tests/test_deepthinkingflow_smoke.py -v
