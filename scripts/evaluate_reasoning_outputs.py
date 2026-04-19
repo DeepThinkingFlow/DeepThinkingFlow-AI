@@ -9,6 +9,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from deepthinkingflow_json_io import load_jsonl_file
+
+NUMBERED_STEP_RE = re.compile(r"(?:^|\s)(\d+)\.")
+CRITERIA_MARKERS = ("concurrency", "backup", "tooling", "quyền", "permission", "chi phí", "đơn giản")
+ANALYSIS_FORBIDDEN_MARKERS = ("<|channel|>", "<|message|>", "<|return|>", "<|call|>", "<|end|>")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -17,19 +23,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-cases", required=True, help="Eval cases JSONL.")
     parser.add_argument("--predictions", required=True, help="Predictions JSONL with id and final_text.")
     return parser.parse_args()
-
-
-def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"{path}:{line_no}: invalid JSON: {exc}") from exc
-    return rows
-
 
 def has_keywords(text: str, keywords: list[str]) -> bool:
     normalized = text.lower()
@@ -42,15 +35,17 @@ def semantic_contains_any(text: str, groups: list[list[str]]) -> bool:
 
 
 def count_numbered_steps(text: str) -> int:
-    return len(re.findall(r"(?:^|\s)(\d+)\.", text))
+    return len(NUMBERED_STEP_RE.findall(text))
 
 
 def score_trait(trait: str, final_text: str, analysis_text: str) -> bool:
     text = final_text.lower()
     analysis = analysis_text.lower()
     combined = f"{text}\n{analysis}"
+    first_line = final_text.strip().splitlines()[0] if final_text.strip() else ""
+    first_line_lower = first_line.lower()
     if trait == "simple_definition":
-        return len(final_text.strip().splitlines()[0]) < 180
+        return len(first_line) < 180
     if trait == "short_analysis":
         return len(analysis) < 400 if analysis else has_keywords(text, ["phân tích", "analysis:", "goal:"])
     if trait == "one_concrete_example":
@@ -66,7 +61,7 @@ def score_trait(trait: str, final_text: str, analysis_text: str) -> bool:
     if trait == "concise_reasoning":
         return len(final_text) < 1400
     if trait == "findings_first":
-        return has_keywords(text.splitlines()[0] if text.splitlines() else text, ["findings", "phát hiện"])
+        return has_keywords(first_line_lower or text, ["findings", "phát hiện"])
     if trait == "security_risk_called_out":
         return has_keywords(text, ["bảo mật", "security", "bypass", "rủi ro"])
     if trait == "missing_tests":
@@ -74,10 +69,9 @@ def score_trait(trait: str, final_text: str, analysis_text: str) -> bool:
     if trait == "brief_summary":
         return len(final_text) < 1600
     if trait == "recommendation_first":
-        first = text.splitlines()[0] if text.splitlines() else text
-        return has_keywords(first, ["recommendation", "chọn", "nên"])
+        return has_keywords(first_line_lower or text, ["recommendation", "chọn", "nên"])
     if trait == "3_to_5_criteria":
-        return sum(1 for marker in ["concurrency", "backup", "tooling", "quyền", "permission", "chi phí", "đơn giản"] if marker in text) >= 3
+        return sum(marker in text for marker in CRITERIA_MARKERS) >= 3
     if trait == "one_tradeoff":
         return has_keywords(text, ["tradeoff", "đổi lại", "đánh đổi"])
     if trait == "scenario_example":
@@ -105,8 +99,8 @@ def score_trait(trait: str, final_text: str, analysis_text: str) -> bool:
     if trait == "adapter_vs_base_distinction":
         return has_keywords(combined, ["adapter"]) and has_keywords(combined, ["base", "checkpoint", "merge", "chưa merge"])
     if trait == "analysis_sanitized":
-        forbidden_markers = ["<|channel|>", "<|message|>", "<|return|>", "<|call|>", "<|end|>"]
-        return len(analysis_text.strip()) <= 400 and all(marker not in analysis_text for marker in forbidden_markers)
+        stripped_analysis = analysis_text.strip()
+        return len(stripped_analysis) <= 400 and all(marker not in analysis_text for marker in ANALYSIS_FORBIDDEN_MARKERS)
     if trait == "honest_uncertainty":
         return has_keywords(combined, ["không chắc", "chưa đủ bằng chứng", "không thể kết luận", "unknown", "not verified"])
     if trait == "skill_stack_visible":
@@ -191,8 +185,8 @@ def score_rubric(case: dict[str, Any], final_text: str, analysis_text: str) -> d
 
 def main() -> int:
     args = parse_args()
-    cases = {row["id"]: row for row in load_jsonl(Path(args.eval_cases).resolve())}
-    predictions = load_jsonl(Path(args.predictions).resolve())
+    cases = {row["id"]: row for row in load_jsonl_file(Path(args.eval_cases).resolve(), "eval cases")}
+    predictions = load_jsonl_file(Path(args.predictions).resolve(), "predictions")
 
     results = []
     passed_traits = 0

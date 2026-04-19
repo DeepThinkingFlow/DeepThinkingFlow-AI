@@ -45,6 +45,7 @@ def detect_schema_family(payload: dict[str, Any]) -> str:
 
 def collect_reports(search_root: Path) -> list[dict[str, Any]]:
     reports: list[dict[str, Any]] = []
+    append_report = reports.append
     for path in sorted(search_root.rglob("*.json")):
         try:
             payload = load_json_file(path, "report")
@@ -77,7 +78,7 @@ def collect_reports(search_root: Path) -> list[dict[str, Any]]:
         elif family == "release-manifest":
             report["release_candidate"] = bool(payload.get("release_state", {}).get("release_candidate", False))
             report["local_host_ready"] = bool(payload.get("release_state", {}).get("local_host_ready", False))
-        reports.append(report)
+        append_report(report)
     return reports
 
 

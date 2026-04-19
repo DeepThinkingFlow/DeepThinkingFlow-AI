@@ -9,6 +9,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from deepthinkingflow_json_io import load_jsonl_file
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate a behavior bundle.")
@@ -17,15 +19,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def read_jsonl(path: Path) -> list[dict]:
-    rows = []
-    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"{path}:{line_no}: invalid JSON: {exc}") from exc
-    return rows
+    return load_jsonl_file(path, "jsonl file")
 
 
 def ensure(condition: bool, message: str) -> None:

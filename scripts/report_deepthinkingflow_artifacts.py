@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from deepthinkingflow_json_io import load_json_file
+
 SCHEMA_VERSION = "dtf-artifact-report/v2"
 
 
@@ -42,26 +44,28 @@ def file_sha256(path: Path) -> str:
 
 def collect_path_report(path: Path) -> dict[str, Any]:
     if path.is_file():
+        stat = path.stat()
         return {
             "type": "file",
             "path": str(path),
             "sha256": file_sha256(path),
-            "size_bytes": path.stat().st_size,
+            "size_bytes": stat.st_size,
         }
     if path.is_dir():
-        files = sorted(item for item in path.rglob("*") if item.is_file())
+        files = sorted(file_path for file_path in path.rglob("*") if file_path.is_file())
         digest = hashlib.sha256()
         file_reports = []
         for file_path in files:
             rel_path = str(file_path.relative_to(path))
             sha = file_sha256(file_path)
+            stat = file_path.stat()
             digest.update(rel_path.encode("utf-8"))
             digest.update(sha.encode("utf-8"))
             file_reports.append(
                 {
                     "path": rel_path,
                     "sha256": sha,
-                    "size_bytes": file_path.stat().st_size,
+                    "size_bytes": stat.st_size,
                 }
             )
         return {
@@ -85,7 +89,7 @@ def detect_claim_level(base_weights: dict[str, Any] | None, adapter_dir: dict[st
 
 
 def load_training_config(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_json_file(path, "training config")
 
 
 def load_optional_artifact_json(raw_path: str) -> dict[str, Any] | None:
@@ -94,7 +98,7 @@ def load_optional_artifact_json(raw_path: str) -> dict[str, Any] | None:
     path = Path(raw_path).resolve()
     if not path.is_file():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_json_file(path, "artifact json")
 
 
 def build_lineage_status(

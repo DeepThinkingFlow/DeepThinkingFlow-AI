@@ -150,6 +150,10 @@ COMMANDS = {
         "script": "build_release_manifest.py",
         "description": "Build a release-oriented manifest from verify and artifact reports.",
     },
+    "cuda-backend-status": {
+        "script": "cuda_backend_status.py",
+        "description": "Report CUDA backend scaffold/build readiness for the NVIDIA path.",
+    },
 }
 
 VENV_PREFERRED_COMMANDS = {
@@ -192,6 +196,7 @@ def print_help() -> None:
     print("  python scripts/deepthinkingflow_cli.py benchmark-runtime --iterations 5")
     print("  python scripts/deepthinkingflow_cli.py aggregate-runs --search-root out")
     print("  python scripts/deepthinkingflow_cli.py check-promotion-readiness --claim-level runtime-only --verify-report /tmp/dtf-verify.json")
+    print("  python scripts/deepthinkingflow_cli.py cuda-backend-status --cuda-arch 89")
     print("  python scripts/deepthinkingflow_cli.py tiny-smoke-release")
     print("  python scripts/deepthinkingflow_cli.py release-manifest --output out/release-manifest.json")
     print("  python scripts/deepthinkingflow_cli.py help train-lora")

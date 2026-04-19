@@ -21,6 +21,7 @@ import chat_deepthinkingflow as chat
 import compile_behavior_bundle as compile_bundle
 import deepthinkingflow_cli as cli
 import deepthinkingflow_env as dtf_env
+import cuda_backend_status as cuda_status_script
 import export_external_runtime_assets as export_runtime
 import build_external_training_bundle as build_external_bundle
 import export_prepared_chat_jsonl as export_chat_jsonl
@@ -177,6 +178,9 @@ class CliSmokeTest(unittest.TestCase):
 
     def test_release_manifest_command_is_registered(self) -> None:
         self.assertIn("release-manifest", cli.COMMANDS)
+
+    def test_cuda_backend_status_command_is_registered(self) -> None:
+        self.assertIn("cuda-backend-status", cli.COMMANDS)
 
 
 class SystemCheckSmokeTest(unittest.TestCase):
@@ -1599,6 +1603,42 @@ class PromotionReadinessSmokeTest(unittest.TestCase):
         self.assertFalse(readiness["ready"])
         self.assertIn("missing_eval_output_for_learned_claim", readiness["hard_failures"])
         self.assertIn("missing_compare_report_for_learned_claim", readiness["hard_failures"])
+
+
+class CudaBackendScaffoldSmokeTest(unittest.TestCase):
+    def test_cuda_backend_files_exist(self) -> None:
+        self.assertTrue((ROOT_DIR / "cuda_backend" / "CMakeLists.txt").is_file())
+        self.assertTrue((ROOT_DIR / "cuda_backend" / "src" / "cuda_runtime.cu").is_file())
+        self.assertTrue((ROOT_DIR / "cuda_backend" / "src" / "python_bindings.cpp").is_file())
+        self.assertTrue((ROOT_DIR / "deepthinkingflow_cuda" / "backend.py").is_file())
+        self.assertTrue((ROOT_DIR / "requirements-cuda-backend.txt").is_file())
+
+    def test_cuda_backend_status_script_reports_contract(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "cuda_backend_status.py",
+            "--cuda-arch",
+            "89",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = cuda_status_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertTrue(payload["performance_contract"]["require_exact_arch"])
+        self.assertTrue(payload["cpu_fallback_supported"])
+        self.assertTrue(payload["strict_cuda_mode_supported"])
+        self.assertIn("CUTLASS 3.x", payload["required_stack"]["libraries"])
+        self.assertEqual(payload["recommended_configure_command"][-1], "-DCMAKE_CUDA_ARCHITECTURES=89")
+        self.assertIn("-DDTF_CUDA_ENABLED=OFF", payload["build_modes"]["cpu_fallback_configure_command"])
+        self.assertIn("-DDTF_CUDA_STRICT=ON", payload["build_modes"]["cuda_configure_command"])
+
+    def test_cuda_backend_rejects_invalid_arch_string(self) -> None:
+        from deepthinkingflow_cuda import backend as cuda_backend
+
+        with self.assertRaisesRegex(ValueError, "exact SM number"):
+            cuda_backend.recommended_cmake_configure_command("native")
 
 
 class CompareEvalReportsTest(unittest.TestCase):

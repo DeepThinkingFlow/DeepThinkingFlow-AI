@@ -21,6 +21,22 @@ def load_json_file(path: Path, label: str = "json file") -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_jsonl_file(path: Path, label: str = "jsonl file") -> list[dict[str, Any]]:
+    if not path.is_file():
+        raise SystemExit(f"Missing {label}: {path}")
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                rows.append(json.loads(stripped))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{path}:{line_no}: invalid JSON: {exc}") from exc
+    return rows
+
+
 def write_json_file(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
