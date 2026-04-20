@@ -32,6 +32,11 @@ import apple_mlx_dequant_range_check as apple_mlx_dequant_range_script
 import apple_mlx_moe_forward_check as apple_mlx_moe_forward_script
 import apple_mlx_kv_cache_shape_check as apple_mlx_kv_cache_script
 import apple_mlx_inference_scaffold_status as apple_mlx_inference_status_script
+import apple_mlx_generation_contract_check as apple_mlx_generation_contract_script
+import apple_mlx_kv_decode_contract_check as apple_mlx_kv_decode_contract_script
+import apple_mlx_end_to_end_verify as apple_mlx_e2e_verify_script
+import accelerator_readiness_report as accelerator_readiness_script
+import accelerator_doctor as accelerator_doctor_script
 import export_external_runtime_assets as export_runtime
 import build_external_training_bundle as build_external_bundle
 import export_prepared_chat_jsonl as export_chat_jsonl
@@ -221,6 +226,21 @@ class CliSmokeTest(unittest.TestCase):
 
     def test_apple_mlx_inference_status_command_is_registered(self) -> None:
         self.assertIn("apple-mlx-inference-status", cli.COMMANDS)
+
+    def test_apple_mlx_generation_contract_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-generation-contract", cli.COMMANDS)
+
+    def test_apple_mlx_kv_decode_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-kv-decode", cli.COMMANDS)
+
+    def test_apple_mlx_e2e_verify_command_is_registered(self) -> None:
+        self.assertIn("apple-mlx-e2e-verify", cli.COMMANDS)
+
+    def test_accelerator_readiness_command_is_registered(self) -> None:
+        self.assertIn("accelerator-readiness", cli.COMMANDS)
+
+    def test_accelerator_doctor_command_is_registered(self) -> None:
+        self.assertIn("accelerator-doctor", cli.COMMANDS)
 
 
 class SystemCheckSmokeTest(unittest.TestCase):
@@ -1670,9 +1690,19 @@ class CudaBackendScaffoldSmokeTest(unittest.TestCase):
         self.assertTrue(payload["cpu_fallback_supported"])
         self.assertTrue(payload["strict_cuda_mode_supported"])
         self.assertIn("CUTLASS 3.x", payload["required_stack"]["libraries"])
+        self.assertEqual(payload["maturity"], "scaffold-only")
+        self.assertFalse(payload["accelerates_current_python_runtime_by_itself"])
+        self.assertFalse(payload["conflicts_with_default_transformers_runtime"])
+        self.assertTrue(payload["integration_boundary"]["never_auto_overrides_default_runtime"])
+        self.assertFalse(payload["readiness_summary"]["end_to_end_inference_ready"])
+        self.assertFalse(payload["capability_matrix"]["end_to_end_generation_path"])
+        self.assertTrue(payload["bottom_line"]["safe_to_keep_in_repo_without_runtime_conflict"])
+        self.assertFalse(payload["bottom_line"]["effective_for_real_inference_acceleration_today"])
         self.assertEqual(payload["recommended_configure_command"][-1], "-DCMAKE_CUDA_ARCHITECTURES=89")
         self.assertIn("-DDTF_CUDA_ENABLED=OFF", payload["build_modes"]["cpu_fallback_configure_command"])
         self.assertIn("-DDTF_CUDA_STRICT=ON", payload["build_modes"]["cuda_configure_command"])
+        self.assertIn("build-native-extension", payload["next_required_steps"])
+        self.assertIn("pybind11", payload["build_blockers"]["missing_requirements"])
 
     def test_cuda_backend_rejects_invalid_arch_string(self) -> None:
         from deepthinkingflow_cuda import backend as cuda_backend
@@ -1701,7 +1731,52 @@ class AppleBackendScaffoldSmokeTest(unittest.TestCase):
         self.assertTrue(payload["performance_contract"]["prefer_unified_memory_views"])
         self.assertTrue(payload["cpu_fallback_supported"])
         self.assertIn("MLX", payload["required_stack"]["frameworks"])
+        self.assertEqual(payload["maturity"], "scaffold-only")
+        self.assertFalse(payload["accelerates_current_python_runtime_by_itself"])
+        self.assertFalse(payload["conflicts_with_default_transformers_runtime"])
+        self.assertTrue(payload["integration_boundary"]["never_auto_overrides_default_runtime"])
+        self.assertFalse(payload["readiness_summary"]["end_to_end_inference_ready"])
+        self.assertFalse(payload["capability_matrix"]["end_to_end_generation_path"])
+        self.assertTrue(payload["bottom_line"]["safe_to_keep_in_repo_without_runtime_conflict"])
+        self.assertFalse(payload["bottom_line"]["effective_for_real_inference_acceleration_today"])
         self.assertIn("-DDTF_APPLE_SILICON_ENABLED=OFF", payload["build_modes"]["cpu_fallback_configure_command"])
+        self.assertIn("build-native-extension", payload["next_required_steps"])
+        self.assertIn("macos-host", payload["build_blockers"]["missing_requirements"])
+
+    def test_accelerator_readiness_report_summarizes_optional_backends(self) -> None:
+        stdout = io.StringIO()
+        argv = ["accelerator_readiness_report.py"]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = accelerator_readiness_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertTrue(payload["recommendation"]["keep_optional_backends_enabled_in_repo"])
+        self.assertTrue(payload["recommendation"]["safe_for_current_default_runtime"])
+        self.assertEqual(payload["cuda"]["maturity"], "scaffold-only")
+        self.assertEqual(payload["apple"]["maturity"], "scaffold-only")
+        self.assertFalse(payload["cuda"]["effective_today"])
+        self.assertFalse(payload["apple"]["effective_today"])
+        self.assertIn("missing_requirements", payload["cuda"])
+        self.assertIn("missing_requirements", payload["apple"])
+        self.assertFalse(payload["cuda"]["ready_to_load_native_extension"])
+        self.assertFalse(payload["apple"]["ready_to_load_native_extension"])
+
+    def test_accelerator_doctor_reports_claim_ceiling(self) -> None:
+        stdout = io.StringIO()
+        argv = ["accelerator_doctor.py"]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = accelerator_doctor_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["schema_version"], "dtf-accelerator-doctor/v1")
+        self.assertEqual(payload["global_verdict"]["release_claim_ceiling"], "scaffold-only")
+        self.assertFalse(payload["global_verdict"]["native_acceleration_ready_today"])
+        self.assertIn("native_extension_loading", payload["cuda"]["missing_capabilities"])
+        self.assertIn("wire-end-to-end-generation-path", payload["apple"]["next_required_steps"])
 
     def test_apple_mlx_status_script_reports_contract_without_mlx(self) -> None:
         stdout = io.StringIO()
@@ -1963,6 +2038,155 @@ class AppleBackendScaffoldSmokeTest(unittest.TestCase):
         self.assertEqual(payload["lm_head_key"], "unembedding.weight")
         self.assertEqual(payload["num_hidden_layers"], 24)
         self.assertEqual(payload["layer_types"][0], "sliding_attention")
+        self.assertTrue(payload["tokenizer_features"]["chat_template_rendering"])
+        self.assertTrue(payload["generation_features"]["kv_cache_scaffold"])
+        self.assertFalse(payload["claim_boundary"]["end_to_end_generation_path_fully_verified"])
+
+    def test_apple_mlx_generation_contract_reports_sampling_runtime(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_generation_contract_check.py",
+            "--model-dir",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow").resolve()),
+            "--prompt",
+            "xin chao",
+            "--reasoning-effort",
+            "high",
+            "--top-p",
+            "0.9",
+            "--top-k",
+            "12",
+            "--min-p",
+            "0.01",
+            "--repetition-penalty",
+            "1.1",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_generation_contract_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertIn("dependency_ready", payload)
+        self.assertEqual(payload["sampling_contract"]["top_p"], 0.9)
+        self.assertEqual(payload["sampling_contract"]["top_k"], 12)
+        self.assertEqual(payload["sampling_contract"]["reasoning_effort"], "high")
+
+    def test_apple_mlx_generation_contract_rejects_invalid_sampling_config(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_generation_contract_check.py",
+            "--model-dir",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow").resolve()),
+            "--top-p",
+            "1.5",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_generation_contract_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 2)
+        self.assertFalse(payload["configuration_ready"])
+        self.assertIn("top_p", payload["configuration_error"])
+
+    def test_apple_mlx_kv_decode_contract_reports_expected_limits(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_kv_decode_contract_check.py",
+            "--model-dir",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow").resolve()),
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_kv_decode_contract_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertTrue(payload["all_layers_within_expected_limits"])
+        self.assertEqual(payload["layers"][0]["expected_max_seq_len"], 128)
+        self.assertIsNone(payload["layers"][1]["expected_max_seq_len"])
+
+    def test_apple_mlx_e2e_verify_reports_contract_ceiling(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "apple_mlx_end_to_end_verify.py",
+            "--model-dir",
+            str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow").resolve()),
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                result = apple_mlx_e2e_verify_script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertIn("dependency_ready", payload)
+        self.assertFalse(payload["verification"]["native_weight_execution_verified"])
+        self.assertEqual(payload["verification"]["claim_ceiling"], "python-contract-only")
+
+
+class AppleTokenizerFeatureTest(unittest.TestCase):
+    class _FakeTokenizer:
+        eos_token_id = 7
+        bos_token_id = 1
+        pad_token_id = 0
+        vocab_size = 100
+        padding_side = "left"
+        truncation_side = "right"
+        chat_template = "{{ messages }}"
+        init_kwargs = {"eos_token_id": [7, 9]}
+
+        def encode(self, text, add_special_tokens=True):
+            base = [11, 12]
+            return ([1] + base + [7]) if add_special_tokens else base
+
+        def decode(self, ids, skip_special_tokens=True):
+            return ",".join(str(v) for v in ids)
+
+        def __call__(self, texts, padding=True, truncation=False, max_length=None, return_tensors="np"):
+            _ = padding, truncation, max_length, return_tensors
+            return {
+                "input_ids": [[1, 2], [3, 4]],
+                "attention_mask": [[1, 1], [1, 1]],
+            }
+
+        def apply_chat_template(self, messages, tokenize, add_generation_prompt, reasoning_effort):
+            _ = tokenize, add_generation_prompt
+            return f"{reasoning_effort}:{messages[-1]['content']}"
+
+    def _build_tokenizer(self):
+        from deepthinkingflow_apple.tokenizer import GPTOssTokenizer
+
+        tokenizer = object.__new__(GPTOssTokenizer)
+        tokenizer.model_dir = str((ROOT_DIR / "runtime" / "transformers" / "DeepThinkingFlow").resolve())
+        tokenizer.tok = self._FakeTokenizer()
+        return tokenizer
+
+    def test_prompt_package_and_compatibility_report(self) -> None:
+        tokenizer = self._build_tokenizer()
+        fake_mx = types.SimpleNamespace(int32="int32", array=lambda value, dtype=None: value)
+        with mock.patch.dict(sys.modules, {"mlx.core": fake_mx}):
+            package = tokenizer.build_prompt_package(
+                [{"role": "user", "content": "xin chao"}],
+                reasoning_effort="high",
+            )
+            report = tokenizer.compatibility_report()
+
+        self.assertEqual(package["rendered_prompt"], "high:xin chao")
+        self.assertEqual(package["reasoning_effort"], "high")
+        self.assertTrue(package["chat_template_supported"])
+        self.assertEqual(report["stop_token_ids"], [7, 9])
+        self.assertTrue(report["chat_template_supported"])
+        self.assertEqual(report["special_tokens"]["pad_token_id"], 0)
+
+    def test_encode_batch_can_return_attention_mask(self) -> None:
+        tokenizer = self._build_tokenizer()
+        fake_mx = types.SimpleNamespace(int32="int32", array=lambda value, dtype=None: value)
+        with mock.patch.dict(sys.modules, {"mlx.core": fake_mx}):
+            payload = tokenizer.encode_batch(["a", "b"], return_attention_mask=True)
+
+        self.assertIn("input_ids", payload)
+        self.assertIn("attention_mask", payload)
 
 
 class CompareEvalReportsTest(unittest.TestCase):

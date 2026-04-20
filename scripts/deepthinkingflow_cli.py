@@ -194,6 +194,26 @@ COMMANDS = {
         "script": "apple_mlx_inference_scaffold_status.py",
         "description": "Report tokenizer, embedding/lm_head keys, and inference-loop scaffold readiness.",
     },
+    "apple-mlx-generation-contract": {
+        "script": "apple_mlx_generation_contract_check.py",
+        "description": "Verify prompt packaging and sampling contract for the Apple/MLX path.",
+    },
+    "apple-mlx-kv-decode": {
+        "script": "apple_mlx_kv_decode_contract_check.py",
+        "description": "Verify KV-cache decode contract for sliding and full-attention Apple layers.",
+    },
+    "apple-mlx-e2e-verify": {
+        "script": "apple_mlx_end_to_end_verify.py",
+        "description": "Run an end-to-end Apple-path contract verification without overclaiming native execution.",
+    },
+    "accelerator-readiness": {
+        "script": "accelerator_readiness_report.py",
+        "description": "Report a unified readiness and conflict-risk view for optional CUDA and Apple backends.",
+    },
+    "accelerator-doctor": {
+        "script": "accelerator_doctor.py",
+        "description": "Run a stricter doctor report for native extension loading and acceleration claim ceilings.",
+    },
 }
 
 VENV_PREFERRED_COMMANDS = {
@@ -247,6 +267,11 @@ def print_help() -> None:
     print("  python scripts/deepthinkingflow_cli.py apple-mlx-moe-forward --activation both --seq-len 8")
     print("  python scripts/deepthinkingflow_cli.py apple-mlx-kv-cache --layer-index 0 --seq-len 1 --cached-seq-len 256")
     print("  python scripts/deepthinkingflow_cli.py apple-mlx-inference-status")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-generation-contract --prompt 'Xin chao'")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-kv-decode")
+    print("  python scripts/deepthinkingflow_cli.py apple-mlx-e2e-verify")
+    print("  python scripts/deepthinkingflow_cli.py accelerator-readiness")
+    print("  python scripts/deepthinkingflow_cli.py accelerator-doctor")
     print("  python scripts/deepthinkingflow_cli.py tiny-smoke-release")
     print("  python scripts/deepthinkingflow_cli.py release-manifest --output out/release-manifest.json")
     print("  python scripts/deepthinkingflow_cli.py help train-lora")

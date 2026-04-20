@@ -47,6 +47,11 @@ def main() -> int:
         "using_coreml_path_without_ane_goal",
         "failing_to_quantize_20b_model_for_bandwidth_and_fit",
     ]
+    payload["bottom_line"] = {
+        "safe_to_keep_in_repo_without_runtime_conflict": True,
+        "effective_for_real_inference_acceleration_today": False,
+        "why": "This path is an explicit optional scaffold. It does not intercept the default runtime unless the native extension is built and called deliberately.",
+    }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 

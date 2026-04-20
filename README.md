@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/Transformers-5.5%2B-orange?style=for-the-badge&logo=huggingface&logoColor=white" />
   <img src="https://img.shields.io/badge/PyTorch-2.11%2B-red?style=for-the-badge&logo=pytorch&logoColor=white" />
   <img src="https://img.shields.io/badge/PEFT-0.19%2B-purple?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Tests-56%2F56%20Passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" />
+  <img src="https://img.shields.io/badge/Tests-114%2F114%20Passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" />
 </p>
 
 <h1 align="center">DeepThinkingFlow-AI</h1>
@@ -34,8 +34,8 @@
 - [CLI Reference](#cli-reference)
 - [Workflows](#workflows)
   - [Inference Workflow](#1-inference-workflow)
-  - [Training Workflow](#2-training-work)
-  - [Evaluation Workflow](#3-evaluation-low)
+  - [Training Workflow](#2-training-workflow)
+  - [Evaluation Workflow](#3-evaluation-workflow)
   - [Full Pipeline Workflow](#4-full-pipeline-end-to-end)
 - [Behavior Bundle System](#behavior-bundle-system)
 - [Model Profile](#model-profile)
@@ -65,7 +65,7 @@ DeepThinkingFlow includes:
 | **Heuristic Evaluation** | Scores outputs against a trait checklist and rubric rules, including skill compliance traits |
 | **Safetensors Inspector** | Header-only audit of the local weight file, validating tensor shapes against architecture config |
 | **Artifact Reporter** | Hashes base weights, adapter outputs, eval files, and classifies the strongest supportable claim level |
-| **Unified CLI** | Single entry point for all 33 Python scripts via `deepthinkingflow_cli.py` (28 commands) |
+| **Unified CLI** | Single entry point for all 56 Python scripts via `deepthinkingflow_cli.py` (50 commands) |
 
 ### Key Features
 
@@ -75,7 +75,7 @@ DeepThinkingFlow includes:
 - **Structured Output** -- Goal, Assumptions, Analysis, Answer, Examples, Checks
 - **Skill Compliance Ladder** -- explicit separation of runtime-only, training-ready, and learned-only-after-training claims
 - **No hidden chain-of-thought claims** -- only visible analysis when opted in
-- **56/56 smoke tests passing** -- covers CLI, runtime helpers, chat flow, prompt rendering, one-shot generation, bundle validation, evaluator traits, training dry-run, asset builder, safetensors inspector, artifact reporter, claim gates, doctor flow, and tiny-smoke release orchestration
+- **114/114 smoke tests passing** -- covers CLI, runtime helpers, chat flow, prompt rendering, one-shot generation, bundle validation, evaluator traits, training dry-run, asset builder, safetensors inspector, artifact reporter, claim gates, doctor flow, tiny-smoke release orchestration, staged training, promotion readiness, accelerator readiness/doctor flows, and the Apple/MLX scaffold plus contract-verification path
 
 ---
 
@@ -86,10 +86,10 @@ graph TB
     User["User Terminal"]
 
     subgraph CLI["CLI Layer"]
-        CLIScript["deepthinkingflow_cli.py<br/><em>Unified launcher - 28 commands</em>"]
+        CLIScript["deepthinkingflow_cli.py<br/><em>Unified launcher - 50 commands</em>"]
     end
 
-    subgraph Scripts["Script Layer (33 scripts)"]
+    subgraph Scripts["Script Layer (56 scripts)"]
         Chat["chat_deepthinkingflow.py"]
         Run["run_transformers_deepthinkingflow.py"]
         Render["render_transformers_deepthinkingflow_prompt.py"]
@@ -105,7 +105,7 @@ graph TB
         GenSkill["generate_skill_compliance_corpus.py"]
         Report["report_deepthinkingflow_artifacts.py"]
         BootEnv["bootstrap_training_env.py"]
-        CreateTiny["create_tiny_gpt_oss_smoke_model.py"]
+        CreateTiny["create_tiny_deepthinkingflow_smoke_model.py"]
         EnvHelper["deepthinkingflow_env.py"]
     end
 
@@ -229,8 +229,24 @@ deepthinkingflow/
 │       │   └── model.safetensors                      # Symlink to original/model.safetensors
 │       └── DeepThinkingFlow-tiny-smoke/               # Tiny model for smoke tests
 │
+├── apple_backend/                                     # Apple Silicon backend scaffold
+│   ├── CMakeLists.txt
+│   ├── include/dtf/apple_backend.hpp
+│   └── src/
+│       ├── apple_backend.cpp
+│       ├── cpu_runtime_stub.cpp
+│       ├── metal_runtime.mm
+│       └── python_bindings.mm
+│
+├── deepthinkingflow_apple/                            # Apple/MLX tokenizer, adapter, inference, and contract helpers
+│   ├── __init__.py
+│   ├── backend.py
+│   ├── inference.py
+│   ├── mlx_adapter.py
+│   └── tokenizer.py
+│
 ├── scripts/
-│   ├── deepthinkingflow_cli.py                        # Unified CLI launcher (28 commands)
+│   ├── deepthinkingflow_cli.py                        # Unified CLI launcher (50 commands)
 │   ├── deepthinkingflow_runtime.py                    # Shared runtime helpers
 │   ├── deepthinkingflow_env.py                        # Environment and dependency detection
 │   ├── chat_deepthinkingflow.py                       # Multi-turn terminal chat
@@ -248,7 +264,22 @@ deepthinkingflow/
 │   ├── evaluate_reasoning_outputs.py                  # Heuristic eval scorer with compliance traits
 │   ├── inspect_safetensors_model.py                   # Safetensors header-only weight audit
 │   ├── report_deepthinkingflow_artifacts.py           # Artifact hashing and claim level classifier
-│   └── create_tiny_gpt_oss_smoke_model.py             # Create tiny model for smoke tests
+│   ├── create_tiny_deepthinkingflow_smoke_model.py    # Create tiny model for smoke tests
+│   ├── apple_backend_status.py                        # Apple backend readiness report
+│   ├── apple_mlx_adapter_status.py                    # MLX adapter readiness report
+│   ├── apple_mlx_attention_shape_check.py             # Attention shape dry-run
+│   ├── apple_mlx_dequant_range_check.py               # MXFP4/UE8 dequant range check
+│   ├── apple_mlx_inference_scaffold_status.py         # Tokenizer + inference scaffold status
+│   ├── apple_mlx_generation_contract_check.py         # Prompt + sampling contract verification
+│   ├── apple_mlx_kv_cache_shape_check.py              # KV cache and alternating attention dry-run
+│   ├── apple_mlx_kv_decode_contract_check.py          # KV-cache decode contract verification
+│   ├── apple_mlx_mlp_key_dump.py                      # Dump real MLP tensor names
+│   ├── apple_mlx_moe_forward_check.py                 # Provisional MoE forward check
+│   ├── apple_mlx_moe_metadata_check.py                # MoE metadata inspection
+│   ├── apple_mlx_weight_loader_check.py               # Weight loader shape verification
+│   ├── apple_mlx_end_to_end_verify.py                 # Apple path end-to-end contract verification
+│   ├── accelerator_readiness_report.py                # Unified optional-backend readiness report
+│   └── accelerator_doctor.py                          # Stricter native-acceleration doctor report
 │
 ├── training/
 │   └── DeepThinkingFlow-lora/
@@ -275,7 +306,7 @@ deepthinkingflow/
 │           └── skill-compliance.md                    # Compliance ladder documentation
 │
 └── tests/
-    └── test_deepthinkingflow_smoke.py                 # 23 smoke tests (all passing)
+    └── test_deepthinkingflow_smoke.py                 # 114 smoke tests (all passing)
 ```
 
 ---
@@ -585,7 +616,7 @@ python scripts/deepthinkingflow_cli.py report-artifacts \
 
 ## CLI Reference
 
-All scripts are accessed through the unified CLI launcher:
+All scripts are accessed through the unified CLI launcher. The table below lists the main command groups plus the newer accelerator and Apple/MLX verification commands.
 
 ```bash
 python scripts/deepthinkingflow_cli.py <command> [args]
@@ -611,6 +642,20 @@ python scripts/deepthinkingflow_cli.py <command> [args]
 | `release-manifest` | `build_release_manifest.py` | Release-oriented manifest combining verify and artifact state |
 | `eval` | `evaluate_reasoning_outputs.py` | Score outputs against trait + rubric checklist |
 | `report-artifacts` | `report_deepthinkingflow_artifacts.py` | Hash artifacts and classify claim level |
+| `doctor` | `doctor_deepthinkingflow.py` | Release-style health report across verify, claim gates, readiness, and artifacts |
+| `preflight-train` | `preflight_deepthinkingflow_training.py` | Estimate whether a training config is feasible on the current machine |
+| `prepare-datasets` | `prepare_external_datasets.py` | Prepare external reasoning/coding datasets into chat-formatted assets |
+| `build-external-train-bundle` | `build_external_training_bundle.py` | Build train/eval JSONL bundles from prepared external datasets |
+| `benchmark-runtime` | `benchmark_deepthinkingflow_runtime.py` | Measure prompt rendering and tokenizer throughput |
+| `cuda-backend-status` | `cuda_backend_status.py` | Report CUDA backend scaffold/build readiness |
+| `apple-backend-status` | `apple_backend_status.py` | Report Apple backend scaffold/build readiness |
+| `apple-mlx-status` | `apple_mlx_adapter_status.py` | Report MLX adapter readiness and Apple-path contract |
+| `apple-mlx-inference-status` | `apple_mlx_inference_scaffold_status.py` | Report tokenizer, generation, and claim-boundary status for Apple path |
+| `apple-mlx-generation-contract` | `apple_mlx_generation_contract_check.py` | Verify prompt packaging and sampling contract for Apple path |
+| `apple-mlx-kv-decode` | `apple_mlx_kv_decode_contract_check.py` | Verify KV-cache decode expectations for sliding/full layers |
+| `apple-mlx-e2e-verify` | `apple_mlx_end_to_end_verify.py` | Run Apple-path end-to-end contract verification without claiming native execution |
+| `accelerator-readiness` | `accelerator_readiness_report.py` | Unified readiness view for optional CUDA and Apple backends |
+| `accelerator-doctor` | `accelerator_doctor.py` | Native acceleration doctor report with claim ceiling and missing capability list |
 
 ### Chat Commands (inside a chat session)
 
@@ -838,7 +883,7 @@ flowchart TD
     H --> I["Evaluate and Compare<br/>eval --eval-cases ... --predictions ...<br/>Review trait_pass_rate + rubric_pass_rate<br/>Skill-compliance eval (stricter)"]
     I --> J{"Repeat with new config?"}
     J -- Yes --> F
-    J -- No --> K["Final: 56/56 tests pass"]
+    J -- No --> K["Final: 114/114 tests pass"]
 ```
 
 ---
@@ -1018,7 +1063,7 @@ Same as LoRA, with these additions:
 
 ## Training Parameter Evolution
 
-DeepThinkingFlow underwent 4 progressive iterations of adapter parameter scaling, increasing trainable parameters from baseline to 6x the original count. All iterations completed successfully with passing training runs, artifact report verification, and the current full smoke suite (56/56).
+DeepThinkingFlow underwent 4 progressive iterations of adapter parameter scaling, increasing trainable parameters from baseline to 6x the original count. All iterations completed successfully with passing training runs, artifact report verification, and the current full smoke suite (114/114).
 
 ### Evolution Summary
 
@@ -1050,7 +1095,7 @@ DeepThinkingFlow underwent 4 progressive iterations of adapter parameter scaling
 | `lora_missing_targets` | [] (none) |
 | Training run | Completed successfully |
 | Artifact report | Pass |
-| Test suite | 56/56 pass |
+| Test suite | 114/114 pass |
 
 ### Parameter Evolution Workflow
 
@@ -1082,7 +1127,7 @@ flowchart TD
 
     M1 --> M2 --> M3 --> M4
 
-    M4 --> FINAL["Final State<br/>trainable_params=39,936 (6x baseline)<br/>total_params=52,394,256<br/>56/56 tests pass<br/>All artifact reports pass"]
+    M4 --> FINAL["Final State<br/>trainable_params=39,936 (6x baseline)<br/>total_params=52,394,256<br/>114/114 tests pass<br/>All artifact reports pass"]
 ```
 
 ### Loss Progression
@@ -1117,7 +1162,7 @@ Initial adapter configuration establishing the starting point.
 | `train_loss` | 12.2351 |
 | `eval_loss` | 12.2371 |
 
-Result: Training run completed, artifact report pass, 56 tests pass.
+Result: Training run completed, artifact report pass, 114 tests pass.
 
 #### Milestone 2: Reform 1 (2x Baseline)
 
@@ -1140,7 +1185,7 @@ First parameter scaling -- doubled LoRA rank and alpha, increased training data 
 | `train_loss` | 12.2199 |
 | `eval_loss` | 12.2248 |
 
-Result: Training run completed, artifact report pass, 56 tests pass.
+Result: Training run completed, artifact report pass, 114 tests pass.
 
 #### Milestone 3: Reform 2 (4x Baseline)
 
@@ -1163,7 +1208,7 @@ Second parameter scaling -- doubled rank and alpha again, increased epochs and t
 | `train_loss` | 12.1929 |
 | `eval_loss` | 12.1814 |
 
-Result: Training run completed, artifact report pass, 56 tests pass.
+Result: Training run completed, artifact report pass, 114 tests pass.
 
 #### Milestone 4: Reform 3 -- Final Configuration (6x Baseline)
 
@@ -1185,7 +1230,7 @@ Epochs, train samples, and eval samples were held constant from Reform 2.
 | `train_loss` | 12.1677 |
 | `eval_loss` | 12.1403 |
 
-Result: Training run completed, artifact report pass, 56 tests pass.
+Result: Training run completed, artifact report pass, 114 tests pass.
 
 ### Additional Hardening Measures
 
@@ -1205,7 +1250,7 @@ Beyond parameter scaling, the following improvements were applied throughout the
 
 ## Testing
 
-### Smoke Tests (56/56)
+### Smoke Tests (114/114)
 
 ```bash
 python -m pytest tests/test_deepthinkingflow_smoke.py -v
@@ -1236,6 +1281,11 @@ python -m pytest tests/test_deepthinkingflow_smoke.py -v
 | `SafetensorsInspectorTest` | `test_inspector_reports_raw_checkpoint_and_config_match` | Inspector validates tensor shapes against config |
 | `ArtifactReportSmokeTest` | `test_artifact_report_classifies_claim_level` | Artifact report claim level classification |
 | `EnvHelpersTest` | `test_dependency_status_detects_transformers` | Environment dependency detection |
+| `AppleBackendScaffoldSmokeTest` | `test_apple_backend_status_script_reports_contract` | Apple backend readiness and claim boundary reporting |
+| `AppleBackendScaffoldSmokeTest` | `test_apple_mlx_generation_contract_reports_sampling_runtime` | Apple prompt/sampling contract verification |
+| `AppleBackendScaffoldSmokeTest` | `test_apple_mlx_kv_decode_contract_reports_expected_limits` | Apple KV-cache decode contract verification |
+| `AppleBackendScaffoldSmokeTest` | `test_apple_mlx_e2e_verify_reports_contract_ceiling` | Apple end-to-end contract ceiling without overclaiming native execution |
+| `CudaBackendScaffoldSmokeTest` | `test_cuda_backend_status_script_reports_contract` | CUDA backend readiness and native-loading boundary reporting |
 
 > Tests use mocks and run without a GPU or real model weights.
 
@@ -1319,6 +1369,11 @@ Checks:      <verification, caveat, or next step>
 ## License
 
 This project is released under the [GNU General Public License v3.0](LICENSE).
+
+---
+
+## Full project
+URL:https://huggingface.co/3edq9e/Deepthinkingflowaimodel/tree/main
 
 ---
 

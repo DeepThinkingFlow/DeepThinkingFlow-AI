@@ -61,6 +61,11 @@ def main() -> int:
         "profiling_only_at_the_end",
         "running_without_async_allocator_or_stream_plan",
     ]
+    payload["bottom_line"] = {
+        "safe_to_keep_in_repo_without_runtime_conflict": True,
+        "effective_for_real_inference_acceleration_today": False,
+        "why": "This path is an explicit optional scaffold. It does not intercept the default runtime unless the native extension is built and called deliberately.",
+    }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
